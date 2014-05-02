@@ -23,6 +23,7 @@
 
 # detect operating system
 UNAME ?= $(shell uname -s)
+MACHINE ?= $(shell uname -m)
 OS := NONE
 ifeq ("$(UNAME)","Linux")
   OS = LINUX
@@ -95,11 +96,8 @@ ifneq ("$(filter arm%,$(HOST_CPU))","")
     ARCH_DETECTED := 32BITS
     PIC ?= 1
     NEW_DYNAREC := 1
-    ifeq ($(NEON), 1)
-        CFLAGS += -mfpu=neon -mfloat-abi=hard -DNEON
-    else
-        CFLAGS += -mfpu=vfp -mfloat-abi=softfp
-    endif
+    CFLAGS += -mfpu=vfp
+    ARM := 1
     $(warning Architecture "$(HOST_CPU)" not officially supported.')
   endif
 endif
@@ -108,11 +106,16 @@ ifeq ("$(CPU)","NONE")
 endif
 
 # base CFLAGS, LDLIBS, and LDFLAGS
-OPTFLAGS ?= -O3 -flto
+OPTFLAGS ?= -flto
 WARNFLAGS ?= -Wall
-CFLAGS += $(OPTFLAGS) $(WARNFLAGS) -ffast-math -fno-strict-aliasing -fvisibility=hidden -I../../src -DM64P_PARALLEL
+CFLAGS += $(OPTFLAGS) $(WARNFLAGS) -ffast-math -fno-strict-aliasing -fvisibility=hidden -I../../src -DM64P_PARALLEL 
 CXXFLAGS += -fvisibility-inlines-hidden
-LDLIBS +=  -lm
+
+ifeq ("$(MACHINE)","armv6l")
+CFLAGS += -DARMv5_ONLY -I/opt/vc/include -I/opt/vc/include/interface/vcos/pthreads -I/opt/vc/include/interface/vmcs_host/linux
+CXXFLAGS += -DARMv5_ONLY
+LDLIBS += -lm -L/opt/vc/lib -lGLESv2 -lEGL -lbcm_host 
+endif
 
 # Since we are building a shared library, we must compile with -fPIC on some architectures
 # On 32-bit x86 systems we do not want to use -fPIC because we don't have to and it has a big performance penalty on this arch
@@ -140,7 +143,7 @@ ifeq ($(OS), FREEBSD)
   TARGET = libmupen64plus$(POSTFIX).so.2.0.0
   SONAME = libmupen64plus$(POSTFIX).so.2
   LDFLAGS += -Wl,-Bsymbolic -shared -Wl,-export-dynamic -Wl,-soname,$(SONAME)
-  LDLIBS += -L${LOCALBASE}/lib -lc
+  LDLIBS += -L${LOCALBASE}/lib -lc -
 endif
 ifeq ($(OS), LINUX)
   TARGET = libmupen64plus$(POSTFIX).so.2.0.0
@@ -151,18 +154,26 @@ ifeq ($(OS), LINUX)
   LDFLAGS += -Wl,-version-script,$(SRCDIR)/api/api_export.ver
 endif
 ifeq ($(OS), OSX)
-  #xcode-select has been around since XCode 3.0, i.e. OS X 10.5
-  OSX_SDK_ROOT = $(shell xcode-select -print-path)/Platforms/MacOSX.platform/Developer/SDKs
-  OSX_SDK_PATH = $(OSX_SDK_ROOT)/$(shell ls $(OSX_SDK_ROOT) | tail -1)
+  # Select the proper SDK
+  # Also, SDKs are stored in a different location since XCode 4.3
+  OSX_SDK ?= $(shell sw_vers -productVersion | cut -f1 -f2 -d .)
+  OSX_XCODEMAJ = $(shell xcodebuild -version | grep '[0-9]*\.[0-9]*' | cut -f2 -d ' ' | cut -f1 -d .)
+  OSX_XCODEMIN = $(shell xcodebuild -version | grep '[0-9]*\.[0-9]*' | cut -f2 -d ' ' | cut -f2 -d .)
+  OSX_XCODEGE43 = $(shell echo "`expr $(OSX_XCODEMAJ) \>= 4``expr $(OSX_XCODEMIN) \>= 3`")
+  ifeq ($(OSX_XCODEGE43), 11)
+    OSX_SYSROOT := /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs
+  else
+    OSX_SYSROOT := /Developer/SDKs
+  endif
 
   TARGET = libmupen64plus$(POSTFIX).dylib
   LDFLAGS += -bundle -read_only_relocs suppress
   LDLIBS += -ldl
   ifeq ($(CPU), X86)
     ifeq ($(ARCH_DETECTED), 64BITS)
-      CFLAGS += -pipe -arch x86_64 -mmacosx-version-min=10.5 -isysroot $(OSX_SDK_PATH)
+      CFLAGS += -pipe -arch x86_64 -mmacosx-version-min=$(OSX_SDK) -isysroot $(OSX_SYSROOT)/MacOSX$(OSX_SDK).sdk
     else
-      CFLAGS += -pipe -mmmx -msse -arch i686 -mmacosx-version-min=10.5 -isysroot $(OSX_SDK_PATH)
+      CFLAGS += -pipe -mmmx -msse -arch i686 -mmacosx-version-min=$(OSX_SDK) -isysroot $(OSX_SYSROOT)/MacOSX$(OSX_SDK).sdk
       ifneq ($(PROFILE), 1)
         CFLAGS += -fomit-frame-pointer
       endif
@@ -287,7 +298,7 @@ INSTALL  ?= install
 MKDIR ?= mkdir -p
 COMPILE.c = $(Q_CC)$(CC) $(CFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c
 COMPILE.cc = $(Q_CXX)$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c
-LINK.o = $(Q_LD)$(CXX) $(CXXFLAGS) $(LDFLAGS) $(TARGET_ARCH)
+LINK.o = $(Q_LD)$(CXX) $(patsubst -O3,-O2,$(CXXFLAGS)) $(LDFLAGS) $(TARGET_ARCH)
 
 ifeq ($(OS),OSX)
   LDCONFIG ?= true  # no 'ldconfig' under OSX
@@ -312,8 +323,11 @@ ifeq ($(PROFILE), 1)
 else
   ifeq ($(DEBUG), 1)
     CFLAGS += -g
+    LDFLAGS += -g
     INSTALL_STRIP_FLAG ?= 
   else
+    CFLAGS += -O3 
+	# -funroll-loops: doesn't make any perceivable difference but adds 1.26 Mb to core size
     ifneq ($(OS),OSX)
       INSTALL_STRIP_FLAG ?= -s
 	endif
@@ -372,15 +386,15 @@ SOURCE = \
 	$(SRCDIR)/api/debugger.c \
 	$(SRCDIR)/api/frontend.c \
 	$(SRCDIR)/api/vidext.c \
+	$(SRCDIR)/api/esUtil.c \
+	$(SRCDIR)/api/rpiGLES.c \
 	$(SRCDIR)/main/main.c \
 	$(SRCDIR)/main/util.c \
 	$(SRCDIR)/main/cheat.c \
 	$(SRCDIR)/main/eventloop.c \
 	$(SRCDIR)/main/md5.c \
-	$(SRCDIR)/main/profile.c \
 	$(SRCDIR)/main/rom.c \
 	$(SRCDIR)/main/savestates.c \
-	$(SRCDIR)/main/sdl_key_converter.c \
 	$(SRCDIR)/main/workqueue.c \
 	$(SRCDIR)/memory/dma.c \
 	$(SRCDIR)/memory/flashram.c \
@@ -396,10 +410,12 @@ SOURCE = \
 	$(SRCDIR)/r4300/r4300.c \
 	$(SRCDIR)/r4300/exception.c \
 	$(SRCDIR)/r4300/interupt.c \
+	$(SRCDIR)/r4300/profile.c \
 	$(SRCDIR)/r4300/pure_interp.c \
 	$(SRCDIR)/r4300/recomp.c \
 	$(SRCDIR)/r4300/reset.c \
 	$(SRCDIR)/osd/screenshot.cpp
+	
 ifeq ("$(OS)","MINGW")
 SOURCE += \
 	$(SRCDIR)/osal/dynamiclib_win32.c \
@@ -425,9 +441,12 @@ ifneq ($(NO_ASM), 1)
       DYNAREC = x86
     endif
   endif
+  
   ifeq ($(CPU), ARM)
     ifeq ($(ARCH_DETECTED), 32BITS)
       DYNAREC = arm
+      CFLAGS += -DARM
+      SOURCE += $(SRCDIR)/memory/dma_arm.S
     endif
   endif
 endif
@@ -516,7 +535,6 @@ targets:
 	@echo "    BITS=32       == build 32-bit binaries on 64-bit machine"
 	@echo "    LIRC=1        == enable LIRC support"
 	@echo "    NO_ASM=1      == build without assembly (no dynamic recompiler or MMX/SSE code)"
-	@echo "    NEON=1        == (ARM only) build for hard floating point environments"
 	@echo "    SHAREDIR=path == extra path to search for shared data files"
 	@echo "    OPTFLAGS=flag == compiler optimization (default: -O3 -flto)"
 	@echo "    WARNFLAGS=flag == compiler warning levels (default: -Wall)"
@@ -557,6 +575,7 @@ uninstall:
 	$(RM) "$(DESTDIR)$(LIBDIR)/$(TARGET)"
 	if [ "$(SONAME)" != "" ]; then $(RM) "$(DESTDIR)$(LIBDIR)/$(SONAME)"; fi
 	$(RM) $(DESTDIR)$(INCDIR)/m64p_*.h
+	$(RM) "$(DESTDIR)$(SHAREDIR)/mupen64plus.cht"
 	$(RM) "$(DESTDIR)$(SHAREDIR)/mupen64plus.ini"
 	$(RM) "$(DESTDIR)$(SHAREDIR)/font.ttf"
 	$(RM) "$(DESTDIR)$(SHAREDIR)/mupencheat.txt"
@@ -565,14 +584,18 @@ clean:
 	$(RM) -r $(TARGET) $(SONAME) $(OBJDIR)
 
 # build dependency files
-CFLAGS += -MD -MP
+CFLAGS += -MD
 -include $(OBJECTS:.o=.d)
 
 CXXFLAGS += $(CFLAGS)
 
+#custom build new_dynarec.c as it will not -O3 optimize on the pi
+$(OBJDIR)/r4300/new_dynarec/new_dynarec.o: $(SRCDIR)/r4300/new_dynarec/new_dynarec.c
+	$(patsubst -O3, -O2, $(COMPILE.c)) -o $@ $<
+
 # standard build rules
 $(OBJDIR)/%.o: $(SRCDIR)/%.S
-	$(COMPILE.c) -o $@ $<
+	$(COMPILE.c) -mlong-calls -o $@ $<
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c
 	$(COMPILE.c) -o $@ $<

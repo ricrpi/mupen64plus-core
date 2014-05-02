@@ -44,7 +44,6 @@
 
 #include "api/callbacks.h"
 #include "main/main.h"
-#include "main/profile.h"
 #include "main/rom.h"
 #include "osal/preproc.h"
 #include "plugin/plugin.h"
@@ -71,7 +70,7 @@ DPS_register dps_register;
 
 ALIGN(16, unsigned int rdram[0x800000/4]);
 
-unsigned char *const rdramb = (unsigned char *)(rdram);
+unsigned char *rdramb = (unsigned char *)(rdram);
 unsigned int SP_DMEM[0x1000/4*2];
 unsigned int *SP_IMEM = SP_DMEM+0x1000/4;
 unsigned char *SP_DMEMb = (unsigned char *)(SP_DMEM);
@@ -1264,9 +1263,9 @@ static void do_SP_Task(void)
 
         //gfx.processDList();
         rsp_register.rsp_pc &= 0xFFF;
-        timed_section_start(TIMED_SECTION_GFX);
+        start_section(GFX_SECTION);
         rsp.doRspCycles(0xFFFFFFFF);
-        timed_section_end(TIMED_SECTION_GFX);
+        end_section(GFX_SECTION);
         rsp_register.rsp_pc |= save_pc;
         new_frame();
 
@@ -1394,9 +1393,9 @@ static void do_SP_Task(void)
     {
         //audio.processAList();
         rsp_register.rsp_pc &= 0xFFF;
-        timed_section_start(TIMED_SECTION_AUDIO);
+        start_section(AUDIO_SECTION);
         rsp.doRspCycles(0xFFFFFFFF);
-        timed_section_end(TIMED_SECTION_AUDIO);
+        end_section(AUDIO_SECTION);
         rsp_register.rsp_pc |= save_pc;
 
         update_count();

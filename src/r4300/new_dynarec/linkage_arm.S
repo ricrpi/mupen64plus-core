@@ -17,22 +17,17 @@
  *   Free Software Foundation, Inc.,                                       *
  *   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.          *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-	.cpu arm9tdmi
-#ifndef NEON
-	.fpu softvfp
-#else
-    .fpu neon
-#endif
+	/*.cpu arm6
+	.fpu vfp*/
 	.eabi_attribute 20, 1
 	.eabi_attribute 21, 1
-#ifndef NEON
 	.eabi_attribute 23, 3
-#endif
 	.eabi_attribute 24, 1
 	.eabi_attribute 25, 1
 	.eabi_attribute 26, 2
 	.eabi_attribute 30, 6
 	.eabi_attribute 18, 4
+	.eabi_attribute 28, 1
 	.file	"linkage_arm.S"
 	.global extra_memory
 	.hidden extra_memory
@@ -101,7 +96,7 @@
 	.type	extra_memory, %object
 	.size	extra_memory, 33554432
 extra_memory:
-	.space	33554432+64+16+16+8+8+8+8+256+8+8+128+128+128+16+8+132+4+256+512+4194304
+	.skip	33554432+64+16+16+8+8+8+8+256+8+8+128+128+128+16+8+132+4+256+512+4194304
 dynarec_local = extra_memory + 33554432
 	.type	dynarec_local, %object
 	.size	dynarec_local, 64
@@ -950,7 +945,7 @@ write_rdramh_new:
 	ldrh	r0, [fp, #hword-dynarec_local]
 	eor	r2, r2, #2
 	lsl	r3, r3, #2
-	strh	r0, [r2, r3]
+	str	r0, [r2, r3]
 	b	.E12
 	.size	write_rdramh_new, .-write_rdramh_new
 	.align	2
@@ -1113,8 +1108,8 @@ write_nomemh_new:
 	lsls	r12, #2
 	bcs	tlb_exception
 	eor	r2, r2, #2
-	ldrh	r0, [fp, #hword-dynarec_local]
-	strh	r0, [r2, r12]
+	ldrh	r0, [fp, #hword-dynarec_local]	
+	str	r0, [r2, r12]
 	mov	pc, lr
 	.size	write_nomemh_new, .-write_nomemh_new
 	.align	2

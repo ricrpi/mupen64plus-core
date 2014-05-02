@@ -39,6 +39,7 @@ extern long long int reg_cop1_fgr_64[32];
 extern int FCR0, FCR31;
 extern tlb tlb_e[32];
 extern unsigned int delay_slot, skip_jump, dyna_interp, op;
+extern unsigned long long int debug_count;
 extern unsigned int r4300emu;
 extern unsigned int next_interupt, CIC_Chip;
 extern int rounding_mode, trunc_mode, round_mode, ceil_mode, floor_mode;
@@ -46,8 +47,6 @@ extern unsigned int last_addr;
 extern char invalid_code[0x100000];
 extern unsigned int jump_to_address;
 extern int no_compiled_jump;
-#define COUNT_PER_OP_DEFAULT 2
-extern unsigned int count_per_op;
 
 void init_blocks(void);
 void free_blocks(void);
@@ -73,6 +72,23 @@ void generic_jump_to(unsigned int address);
 #define CORE_PURE_INTERPRETER 0
 #define CORE_INTERPRETER      1
 #define CORE_DYNAREC          2
+
+// profiling
+#define ALL_SECTION 0
+#define GFX_SECTION 1
+#define AUDIO_SECTION 2
+#define COMPILER_SECTION 3
+#define IDLE_SECTION 4
+
+#ifdef PROFILE
+  void start_section(int section_type);
+  void end_section(int section_type);
+  void refresh_stat(void);
+#else
+  #define start_section(a)
+  #define end_section(a)
+  #define refresh_stat()
+#endif
 
 #endif /* R4300_H */
 

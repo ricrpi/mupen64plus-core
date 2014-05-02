@@ -48,7 +48,7 @@
 
 #define MAXBLOCK 4096
 #define MAX_OUTPUT_BLOCK_SIZE 262144
-#define CLOCK_DIVIDER count_per_op
+#define CLOCK_DIVIDER 2
 
 void *base_addr;
 
@@ -2742,7 +2742,7 @@ static void load_assemble(int i,struct regstat *i_regs)
   int s,th,tl,addr,map=-1,cache=-1;
   int offset;
   int jaddr=0;
-  int memtarget,c=0;
+  int memtarget=0,c=0;
   u_int hr,reglist=0;
   th=get_reg(i_regs->regmap,rt1[i]|64);
   tl=get_reg(i_regs->regmap,rt1[i]);
@@ -3014,8 +3014,8 @@ static void store_assemble(int i,struct regstat *i_regs)
   int s,th,tl,map=-1,cache=-1;
   int addr,temp;
   int offset;
-  int jaddr=0,jaddr2,type;
-  int memtarget,c=0;
+  int jaddr=0,type;
+  int memtarget=0,c=0;
   int agr=AGEN1+(i&1);
   u_int hr,reglist=0;
   th=get_reg(i_regs->regmap,rs2[i]|64);
@@ -3202,9 +3202,9 @@ static void storelr_assemble(int i,struct regstat *i_regs)
 {
   int s,th,tl;
   int temp;
-  int temp2;
+  int temp2=0;
   int offset;
-  int jaddr=0,jaddr2;
+  int jaddr=0;
   int case1,case2,case3;
   int done0,done1,done2;
   int memtarget,c=0;
@@ -3446,7 +3446,7 @@ static void c1ls_assemble(int i,struct regstat *i_regs)
   int map=-1;
   int offset;
   int c=0;
-  int jaddr,jaddr2=0,jaddr3,type;
+  int jaddr,jaddr2=0,type;
   int agr=AGEN1+(i&1);
   u_int hr,reglist=0;
   th=get_reg(i_regs->regmap,FTEMP|64);
@@ -3883,7 +3883,7 @@ static void loop_preload(signed char pre[],signed char entry[])
 static void address_generation(int i,struct regstat *i_regs,signed char entry[])
 {
   if(itype[i]==LOAD||itype[i]==LOADLR||itype[i]==STORE||itype[i]==STORELR||itype[i]==C1LS) {
-    int ra;
+    int ra=0;
     int agr=AGEN1+(i&1);
     int mgr=MGEN1+(i&1);
     if(itype[i]==LOAD) {
@@ -3891,14 +3891,14 @@ static void address_generation(int i,struct regstat *i_regs,signed char entry[])
       if(ra<0) ra=get_reg(i_regs->regmap,-1);
       assert(ra>=0);
     }
-    if(itype[i]==LOADLR) {
+    else if(itype[i]==LOADLR) {
       ra=get_reg(i_regs->regmap,FTEMP);
     }
-    if(itype[i]==STORE||itype[i]==STORELR) {
+    else if(itype[i]==STORE||itype[i]==STORELR) {
       ra=get_reg(i_regs->regmap,agr);
       if(ra<0) ra=get_reg(i_regs->regmap,-1);
     }
-    if(itype[i]==C1LS) {
+    else if(itype[i]==C1LS) {
       if (opcode[i]==0x31||opcode[i]==0x35) // LWC1/LDC1
         ra=get_reg(i_regs->regmap,FTEMP);
       else { // SWC1/SDC1
@@ -4728,7 +4728,7 @@ static void do_ccstub(int n)
           emit_loadreg(rs2[i],s2l);
       #endif
       int hr=0;
-      int addr,alt,ntaddr;
+      int addr=0,alt=0,ntaddr=0;
       while(hr<HOST_REGS)
       {
         if(hr!=EXCLUDE_REG && hr!=HOST_CCREG &&
@@ -6104,7 +6104,7 @@ static void pagespan_assemble(int i,struct regstat *i_regs)
     s1h=s2h=-1;
   }
   int hr=0;
-  int addr,alt,ntaddr;
+  int addr=0,alt=0,ntaddr=0;
   if(i_regs->regmap[HOST_BTREG]<0) {addr=HOST_BTREG;}
   else {
     while(hr<HOST_REGS)

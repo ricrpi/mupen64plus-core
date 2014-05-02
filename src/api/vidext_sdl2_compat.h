@@ -544,7 +544,7 @@ SDL_CompatEventFilter(void *userdata, SDL_Event * event)
                 }
             }
             if (unicode) {
-                event->key.keysym.unicode = unicode;
+                event->key.keysym.sym = unicode;
             }
             break;
         }

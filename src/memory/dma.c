@@ -44,8 +44,19 @@
 #include "main/rom.h"
 #include "main/util.h"
 
+#define MODE 1 //0,1,2
+#define PRINT_DMA_MSG(...) DebugMessage(__VA_ARGS__)
+
+
+#ifndef PRINT_DMA_MSG
+#define PRINT_DMA_MSG(...)
+#endif
+
+#if !defined(NO_ASM) && defined(ARM) && MODE == 2
+extern unsigned int dma_copy(void*, void*, unsigned int, unsigned int, unsigned it);
+#endif
+
 static unsigned char sram[0x8000];
-int delay_si = 0;
 
 static char *get_sram_path(void)
 {
@@ -98,8 +109,6 @@ static void sram_write_file(void)
 
 void dma_pi_read(void)
 {
-    unsigned int i;
-
     if (pi_register.pi_cart_addr_reg >= 0x08000000
             && pi_register.pi_cart_addr_reg < 0x08010000)
     {
@@ -107,12 +116,18 @@ void dma_pi_read(void)
         {
             sram_read_file();
 
+			//PRINT_DMA_MSG(M64MSG_INFO, "DMA %d %d %x > %x", __LINE__, pi_register.pi_rd_len_reg & 0xFFFFFF, rdram, sram );
+
+#if MODE > 0
+			memcpy(&sram[(pi_register.pi_cart_addr_reg-0x08000000)&0xFFFF], &rdram[pi_register.pi_dram_addr_reg], (pi_register.pi_rd_len_reg & 0xFFFFFF)+1);
+#else
+			unsigned int i;
             for (i=0; i < (pi_register.pi_rd_len_reg & 0xFFFFFF)+1; i++)
             {
                 sram[((pi_register.pi_cart_addr_reg-0x08000000)+i)^S8] =
                     ((unsigned char*)rdram)[(pi_register.pi_dram_addr_reg+i)^S8];
             }
-
+#endif
             sram_write_file();
 
             flashram_info.use_flashram = -1;
@@ -144,15 +159,18 @@ void dma_pi_write(void)
         {
             if (flashram_info.use_flashram != 1)
             {
-                int i;
-
                 sram_read_file();
 
+				//PRINT_DMA_MSG(M64MSG_INFO, "DMA %d %d %x > %x", __LINE__, pi_register.pi_wr_len_reg & 0xFFFFFF, sram, rdram );
+#if MODE > 0
+				memcpy(&rdram[pi_register.pi_dram_addr_reg], &sram[(pi_register.pi_cart_addr_reg-0x08000000)&0xFFFF], (pi_register.pi_wr_len_reg & 0xFFFFFF)+1);
+#else
                 for (i=0; i<(int)(pi_register.pi_wr_len_reg & 0xFFFFFF)+1; i++)
                 {
                     ((unsigned char*)rdram)[(pi_register.pi_dram_addr_reg+i)^S8]=
                         sram[(((pi_register.pi_cart_addr_reg-0x08000000)&0xFFFF)+i)^S8];
                 }
+#endif
 
                 flashram_info.use_flashram = -1;
             }
@@ -204,12 +222,39 @@ void dma_pi_write(void)
 
     if (r4300emu != CORE_PURE_INTERPRETER)
     {
-        for (i=0; i<(int)longueur; i++)
+		unsigned long rdram_address1 = pi_register.pi_dram_addr_reg+i+0x80000000;
+        unsigned long rdram_address2 = pi_register.pi_dram_addr_reg+i+0xa0000000;
+
+		//PRINT_DMA_MSG(M64MSG_INFO, "dma.c:%d 0x%08X 0x%08X, longueur = %d", __LINE__, &((unsigned char*)rdram)[pi_register.pi_dram_addr_reg], &rom[(pi_register.pi_cart_addr_reg-0x10000000)&0x3FFFFFF], longueur );
+        
+#if 1
+		memcpy(&((unsigned char*)rdram)[pi_register.pi_dram_addr_reg], &rom[((pi_register.pi_cart_addr_reg-0x10000000)&0x3FFFFFF)], longueur);
+		
+		if (!invalid_code[rdram_address1>>12])
         {
-            unsigned long rdram_address1 = pi_register.pi_dram_addr_reg+i+0x80000000;
-            unsigned long rdram_address2 = pi_register.pi_dram_addr_reg+i+0xa0000000;
-            ((unsigned char*)rdram)[(pi_register.pi_dram_addr_reg+i)^S8]=
-                rom[(((pi_register.pi_cart_addr_reg-0x10000000)&0x3FFFFFF)+i)^S8];
+            if (!blocks[rdram_address1>>12] ||
+                blocks[rdram_address1>>12]->block[(rdram_address1&0xFFF)/4].ops !=
+                current_instruction_table.NOTCOMPILED)
+            {
+                invalid_code[rdram_address1>>12] = 1;
+            }
+	#ifdef NEW_DYNAREC
+            invalidate_block(rdram_address1>>12);
+	#endif
+        }
+        if (!invalid_code[rdram_address2>>12])
+        {
+            if (!blocks[rdram_address1>>12] ||
+                blocks[rdram_address2>>12]->block[(rdram_address2&0xFFF)/4].ops !=
+                current_instruction_table.NOTCOMPILED)
+            {
+                invalid_code[rdram_address2>>12] = 1;
+            }
+        }
+#else
+		for (i=0; i<(int)longueur; i++)
+        {            
+			((unsigned char*)rdram)[(pi_register.pi_dram_addr_reg+i)^S8]= rom[(((pi_register.pi_cart_addr_reg-0x10000000)&0x3FFFFFF)+i)^S8];
 
             if (!invalid_code[rdram_address1>>12])
             {
@@ -233,14 +278,21 @@ void dma_pi_write(void)
                 }
             }
         }
-    }
+#endif    
+	}
     else
     {
-        for (i=0; i<(int)longueur; i++)
+
+#if MODE > 0 && 1
+		//PRINT_DMA_MSG(M64MSG_INFO, "dma.c:%d %X %X, longueur = %d", __LINE__, ((unsigned char*)rdram)[pi_register.pi_dram_addr_reg], rom[(pi_register.pi_cart_addr_reg-0x10000000)&0x3FFFFFF], longueur );
+		memcpy(&((unsigned char*)rdram)[pi_register.pi_dram_addr_reg], &rom[(pi_register.pi_cart_addr_reg-0x10000000)&0x3FFFFFF], longueur);
+#else
+		for (i=0; i<(int)longueur; i++)
         {
             ((unsigned char*)rdram)[(pi_register.pi_dram_addr_reg+i)^S8]=
                 rom[(((pi_register.pi_cart_addr_reg-0x10000000)&0x3FFFFFF)+i)^S8];
         }
+#endif
     }
 
     // Set the RDRAM memory size when copying main ROM code
@@ -288,8 +340,6 @@ void dma_pi_write(void)
 
 void dma_sp_write(void)
 {
-    unsigned int i,j;
-
     unsigned int l = sp_register.sp_rd_len_reg;
 
     unsigned int length = ((l & 0xfff) | 7) + 1;
@@ -302,20 +352,35 @@ void dma_sp_write(void)
     unsigned char *spmem = ((sp_register.sp_mem_addr_reg & 0x1000) != 0) ? (unsigned char*)SP_IMEM : (unsigned char*)SP_DMEM;
     unsigned char *dram = (unsigned char*)rdram;
 
-    for(j=0; j<count; j++) {
-        for(i=0; i<length; i++) {
+	//PRINT_DMA_MSG(M64MSG_INFO, "DMA:%d, %x << %x, len=%d, count=%d, skip=%d", __LINE__, &spmem[memaddr], &dram[dramaddr], length, count, skip);
+
+#if !defined(NO_ASM) && defined(ARM) && MODE > 1
+	dma_copy(&spmem[memaddr], &dram[dramaddr], length, count, skip);
+#elif MODE > 0
+	unsigned int j;
+	for(j=0; j<count; j++) 
+	{
+		memcpy(&spmem[memaddr], &dram[dramaddr], length);
+		memaddr += length;
+		dramaddr += length + skip;
+    }
+#else
+    unsigned int i,j;
+    for(j=0; j<count; j++)
+	{
+        for(i=0; i<length; i++)
+		{
             spmem[memaddr^S8] = dram[dramaddr^S8];
             memaddr++;
             dramaddr++;
         }
         dramaddr+=skip;
     }
+#endif
 }
 
 void dma_sp_read(void)
 {
-    unsigned int i,j;
-
     unsigned int l = sp_register.sp_wr_len_reg;
 
     unsigned int length = ((l & 0xfff) | 7) + 1;
@@ -328,7 +393,20 @@ void dma_sp_read(void)
     unsigned char *spmem = ((sp_register.sp_mem_addr_reg & 0x1000) != 0) ? (unsigned char*)SP_IMEM : (unsigned char*)SP_DMEM;
     unsigned char *dram = (unsigned char*)rdram;
 
-    for(j=0; j<count; j++) {
+	//PRINT_DMA_MSG(M64MSG_INFO, "DMA:%d, %x << %x, len=%d, count=%d, skip=%d", __LINE__, &spmem[memaddr], &dram[dramaddr], length, count, skip);
+
+#if !defined(NO_ASM) && defined(ARM) && MODE > 1
+	dma_copy(&dram[dramaddr],  &spmem[memaddr], length, count, skip);
+#elif MODE > 0
+    unsigned int j;
+    	for(j=0; j<count; j++) {
+		memcpy(&dram[dramaddr], &spmem[memaddr], length);
+		memaddr += length;
+		dramaddr += length + skip;
+    }
+#else
+    unsigned int i,j;
+        for(j=0; j<count; j++) {
         for(i=0; i<length; i++) {
             dram[dramaddr^S8] = spmem[memaddr^S8];
             memaddr++;
@@ -336,6 +414,7 @@ void dma_sp_read(void)
         }
         dramaddr+=skip;
     }
+#endif
 }
 
 void dma_si_write(void)
@@ -355,14 +434,7 @@ void dma_si_write(void)
 
     update_pif_write();
     update_count();
-
-    if (delay_si) {
-        add_interupt_event(SI_INT, /*0x100*/0x900);
-    } else {
-        MI_register.mi_intr_reg |= 0x02; // SI
-        si_register.si_stat |= 0x1000; // INTERRUPT
-        check_interupt();
-    }
+    add_interupt_event(SI_INT, /*0x100*/0x900);
 }
 
 void dma_si_read(void)
@@ -383,13 +455,6 @@ void dma_si_read(void)
     }
 
     update_count();
-
-    if (delay_si) {
-        add_interupt_event(SI_INT, /*0x100*/0x900);
-    } else {
-        MI_register.mi_intr_reg |= 0x02; // SI
-        si_register.si_stat |= 0x1000; // INTERRUPT
-        check_interupt();
-    }
+    add_interupt_event(SI_INT, /*0x100*/0x900);
 }
 
