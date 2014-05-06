@@ -373,7 +373,7 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\src\main\profile.c"
+				RelativePath="..\..\src\r4300\profile.c"
 				>
 			</File>
 			<File
@@ -406,10 +406,6 @@
 			</File>
 			<File
 				RelativePath="..\..\src\main\savestates.c"
-				>
-			</File>
-			<File
-				RelativePath="..\..\src\main\sdl_key_converter.c"
 				>
 			</File>
 			<File
@@ -623,10 +619,6 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\src\main\profile.h"
-				>
-			</File>
-			<File
 				RelativePath="..\..\src\r4300\r4300.h"
 				>
 			</File>
@@ -652,10 +644,6 @@
 			</File>
 			<File
 				RelativePath="..\..\src\main\savestates.h"
-				>
-			</File>
-			<File
-				RelativePath="..\..\src\main\sdl_key_converter.h"
 				>
 			</File>
 			<File

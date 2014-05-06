@@ -30,8 +30,6 @@
 #include "m64p_types.h"
 #include "callbacks.h"
 
-int    g_Verbose = 1;
-
 /* local variables */
 static ptr_DebugCallback pDebugFunc = NULL;
 static ptr_StateCallback pStateFunc = NULL;
@@ -55,22 +53,18 @@ m64p_error SetStateCallback(ptr_StateCallback pFunc, void *Context)
 
 void DebugMessage(int level, const char *message, ...)
 {
-  	char msgbuf[1024];
-  
+  char msgbuf[256];
+  va_list args;
 
-  	if (pDebugFunc == NULL)
-		return;
+  if (pDebugFunc == NULL)
+      return;
 
-	if ( level != M64MSG_VERBOSE || g_Verbose )
-	{
-		va_list args;
-	  	va_start(args, message);
-	  	vsprintf(msgbuf, message, args);
+  va_start(args, message);
+  vsprintf(msgbuf, message, args);
 
-	  	(*pDebugFunc)(DebugContext, level, msgbuf);
+  (*pDebugFunc)(DebugContext, level, msgbuf);
 
-	  	va_end(args);
-	}
+  va_end(args);
 }
 
 void StateChanged(m64p_core_param param_type, int new_value)
