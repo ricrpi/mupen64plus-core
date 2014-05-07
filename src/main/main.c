@@ -42,7 +42,9 @@
 #include "api/vidext.h"
 
 #include "main.h"
+#include "cheat.h"
 #include "eventloop.h"
+#include "profile.h"
 #include "rom.h"
 #include "savestates.h"
 #include "util.h"
@@ -57,9 +59,6 @@
 #include "r4300/interupt.h"
 #include "r4300/reset.h"
 
-#include <sched.h>
-#include <errno.h>
-
 #ifdef DBG
 #include "debugger/dbg_types.h"
 #include "debugger/debugger.h"
@@ -71,6 +70,8 @@
 
 /* version number for Core config section */
 #define CONFIG_PARAM_VERSION 1.01
+
+#define ARRAY_SIZE(x) (sizeof(x)/sizeof(x[0]))
 
 /** globals **/
 m64p_handle g_CoreConfig = NULL;
@@ -86,7 +87,7 @@ static int   l_TakeScreenshot = 0;       // Tell OSD Rendering callback to take 
 static int   l_SpeedFactor = 100;        // percentage of nominal game speed at which emulator is running
 static int   l_FrameAdvance = 0;         // variable to check if we pause on next frame
 static int   l_MainSpeedLimit = 1;       // insert delay during vi_interrupt to keep speed at real-time
-static int   l_Verbose = 1;
+
 static osd_message_t *l_msgVol = NULL;
 static osd_message_t *l_msgFF = NULL;
 static osd_message_t *l_msgPause = NULL;
@@ -133,7 +134,6 @@ const char *get_savesrampath(void)
 
 void main_message(m64p_msg_level level, unsigned int corner, const char *format, ...)
 {
-	if (level == M64MSG_VERBOSE && !l_Verbose) return;
     va_list ap;
     char buffer[2049];
     va_start(ap, format);
@@ -198,9 +198,10 @@ int main_set_core_defaults(void)
     ConfigSetDefaultString(g_CoreConfig, "SaveStatePath", "", "Path to directory where emulator save states (snapshots) are saved. If this is blank, the default value of ${UserConfigPath}/save will be used");
     ConfigSetDefaultString(g_CoreConfig, "SaveSRAMPath", "", "Path to directory where SRAM/EEPROM data (in-game saves) are stored. If this is blank, the default value of ${UserConfigPath}/save will be used");
     ConfigSetDefaultString(g_CoreConfig, "SharedDataPath", "", "Path to a directory to search when looking for shared data files");
-	ConfigSetDefaultInt(g_CoreConfig, "Scheduler", 10, "Scheduling policy. 0 for Standard (SCHED_OTHER), 1-99 RealTime FIFO policy with Priority of [N]");
-    
-	/* handle upgrades */
+    ConfigSetDefaultBool(g_CoreConfig, "DelaySI", 1, "Delay interrupt after DMA SI read/write");
+    ConfigSetDefaultInt(g_CoreConfig, "CountPerOp", 0, "Force number of cycles per emulated instruction");
+
+    /* handle upgrades */
     if (bUpgrade)
     {
         if (fConfigParamsVersion < 1.01f)
@@ -555,9 +556,6 @@ m64p_error main_core_state_set(m64p_core_param param, int val)
                 return M64ERR_INVALID_STATE;
             event_set_gameshark(val);
             return M64ERR_SUCCESS;
-		case M64CORE_UI_VERBOSE:
-			l_Verbose = val;
-			return M64ERR_SUCCESS;
         // these are only used for callbacks; they cannot be queried or set
         case M64CORE_STATE_LOADCOMPLETE:
         case M64CORE_STATE_SAVECOMPLETE:
@@ -650,20 +648,18 @@ static void video_plugin_render_callback(int bScreenRedrawn)
     {
         // if the OSD is enabled, and the screen has not been recently redrawn, then we cannot take a screenshot now because
         // it contains the OSD text.  Wait until the next redraw
-//        if (!bOSD || bScreenRedrawn)
-		if (bScreenRedrawn)
+        if (!bOSD || bScreenRedrawn)
         {
             TakeScreenshot(l_TakeScreenshot - 1);  // current frame number +1 is in l_TakeScreenshot
             l_TakeScreenshot = 0; // reset flag
         }
     }
 
-	// if the OSD is enabled, then draw it now
+    // if the OSD is enabled, then draw it now
     if (bOSD)
     {
         osd_render();
     }
-    
 }
 
 void new_frame(void)
@@ -688,9 +684,10 @@ void new_vi(void)
     static unsigned int LastFPSTime = 0;
     static unsigned int CounterTime = 0;
     static unsigned int CalculatedTime ;
-	static int VItimes[6] = {0,0,0,0,0,0};
-	static unsigned int VItimesIndex = 0;
-	static int VItimesTotal = 0;
+
+    static int VItimes[] = {0,0,0,0,0,0};
+    static unsigned int VItimesIndex = 0;
+    static int VItimesTotal = 0;
 
     static int VI_Counter = 0;
 
@@ -698,8 +695,7 @@ void new_vi(void)
     double AdjustedLimit = VILimitMilliseconds * 100.0 / l_SpeedFactor;  // adjust for selected emulator speed
     int time;
 
-
-    start_section(IDLE_SECTION);
+    timed_section_start(TIMED_SECTION_IDLE);
     VI_Counter++;
 
 #ifdef DBG
@@ -712,23 +708,23 @@ void new_vi(void)
         return;
     }
     CurrentFPSTime = SDL_GetTicks();
-
+    
     Dif = CurrentFPSTime - LastFPSTime;
 
     CalculatedTime = (unsigned int) (CounterTime + AdjustedLimit * VI_Counter);
     time = (int)(CalculatedTime - CurrentFPSTime);
 
-	VItimesTotal -= VItimes[VItimesIndex];
-	VItimes[VItimesIndex++] = time;
-	VItimesTotal += time;
-	if (VItimesIndex == sizeof(VItimes)/4) VItimesIndex = 0;
+    VItimesTotal -= VItimes[VItimesIndex];
+    VItimes[VItimesIndex++] = time;
+    VItimesTotal += time;
+    if (VItimesIndex == ARRAY_SIZE(VItimes)) VItimesIndex = 0;
 
-    if (Dif < AdjustedLimit)
+    if (Dif < AdjustedLimit) 
     {
-	if (VItimesTotal > 0 && l_MainSpeedLimit)
+ 	if (VItimesTotal > 0 && l_MainSpeedLimit)
         {
-            DebugMessage(M64MSG_VERBOSE, "    new_vi(): Waiting %ims", VItimesTotal/6);
-            SDL_Delay(VItimesTotal/6);
+            DebugMessage(M64MSG_VERBOSE, "    new_vi(): Waiting %ims", VItimesTotal / ARRAY_SIZE(VItimes));
+            SDL_Delay(VItimesTotal / ARRAY_SIZE(VItimes));
         }
         CurrentFPSTime = CurrentFPSTime + time;
     }
@@ -738,9 +734,9 @@ void new_vi(void)
         CounterTime = SDL_GetTicks();
         VI_Counter = 0 ;
     }
-
+    
     LastFPSTime = CurrentFPSTime ;
-    end_section(IDLE_SECTION);
+    timed_section_end(TIMED_SECTION_IDLE);
 }
 
 /*********************************************************************************************************
@@ -750,46 +746,16 @@ m64p_error main_run(void)
 {
     /* take the r4300 emulator mode from the config file at this point and cache it in a global variable */
     r4300emu = ConfigGetParamInt(g_CoreConfig, "R4300Emulator");
-	uint32_t SchedulerPriority = ConfigGetParamInt(g_CoreConfig, "Scheduler");
-	
-	if (SchedulerPriority > 0)
-	{
-		if (SchedulerPriority > sched_get_priority_max(SCHED_FIFO)) SchedulerPriority = 20;
-
-		struct sched_param sp;	
-		sp.sched_priority = SchedulerPriority;
-
-		if (!sched_setscheduler(0, SCHED_FIFO, &sp) )
-		{
-			DebugMessage(M64MSG_VERBOSE, "Running as SCHED_FIFO, priority %d", SchedulerPriority);
-		}
-		else
-		{
-			int e = errno;
-			
-			switch (e)
-			{
-			case EINVAL:
-				DebugMessage(M64MSG_WARNING, "Could not run as SCHED_FIFO, priority %d, error EINVAL", SchedulerPriority);
-				break;
-			case EPERM:
-				DebugMessage(M64MSG_WARNING, "Could not run as SCHED_FIFO, priority %d, error EPERM", SchedulerPriority);
-				break;
-			case ESRCH:
-				DebugMessage(M64MSG_WARNING, "Could not run as SCHED_FIFO, priority %d, error ESRCH", SchedulerPriority);
-				break;
-			default:
-				DebugMessage(M64MSG_WARNING, "Could not run as SCHED_FIFO, priority %d, error %d", SchedulerPriority, e);
-			}
-		}
-		
-		
-	}
 
     /* set some other core parameters based on the config file values */
     savestates_set_autoinc_slot(ConfigGetParamBool(g_CoreConfig, "AutoStateSlotIncrement"));
     savestates_select_slot(ConfigGetParamInt(g_CoreConfig, "CurrentStateSlot"));
     no_compiled_jump = ConfigGetParamBool(g_CoreConfig, "NoCompiledJump");
+    delay_si = ConfigGetParamBool(g_CoreConfig, "DelaySI");
+    count_per_op = ConfigGetParamInt(g_CoreConfig, "CountPerOp");
+    if (count_per_op <= 0)
+        count_per_op = ROM_PARAMS.countperop;
+    cheat_add_hacks();
 
     // initialize memory, and do byte-swapping if it's not been done yet
     if (g_MemHasBeenBSwapped == 0)
@@ -815,7 +781,6 @@ m64p_error main_run(void)
     {
         audio.romClosed(); gfx.romClosed(); free_memory(); return M64ERR_PLUGIN_FAIL;
     }
-
 
     /* set up the SDL key repeat and event filter to catch keyboard/joystick commands for the core */
     event_initialize();
@@ -844,19 +809,13 @@ m64p_error main_run(void)
     /* Startup message on the OSD */
     osd_new_message(OSD_MIDDLE_CENTER, "Mupen64Plus Started...");
 
-
     g_EmulatorRunning = 1;
     StateChanged(M64CORE_EMU_STATE, M64EMU_RUNNING);
 
     /* call r4300 CPU core and run the game */
     r4300_reset_hard();
     r4300_reset_soft();
-
-	DebugMessage(M64MSG_INFO, "Starting emulation at %u", SDL_GetTicks());
-    
-	r4300_execute();
-
-	DebugMessage(M64MSG_INFO, "Stopping emulation at %u", SDL_GetTicks());
+    r4300_execute();
 
     /* now begin to shut down */
 #ifdef WITH_LIRC
@@ -922,12 +881,3 @@ void main_stop(void)
     }
 #endif        
 }
-
-/*********************************************************************************************************
-* main function
-*/
-int main(int argc, char *argv[])
-{
-    return 1;
-}
-
