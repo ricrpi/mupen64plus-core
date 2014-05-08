@@ -59,7 +59,6 @@
 #endif
 
 #define USE_SPECIAL
-//#define USE_COMPARE
 //#define USE_CHECK
 //#define NEW_COUNT
 
@@ -373,7 +372,7 @@ void translate_event_queue(unsigned int base)
 #endif
         aux = aux->next;
     }
-#ifdef USE_COMPARE
+#ifdef COMPARE_CORE
     add_interupt_event_count(COMPARE_INT, Compare);
 #endif
 #ifdef USE_SPECIAL
@@ -421,7 +420,7 @@ void load_eventqueue_infos(char *buf)
         
 		switch (type)
 		{
-			#ifdef USE_COMPARE
+			#ifdef COMPARE_CORE
 			case COMPARE_INT:	add_interupt_event_count(COMPARE_INT, count); break;
 			#endif
 			#ifdef USE_SPECIAL
@@ -649,12 +648,12 @@ X11_PumpEvents();
 
         case COMPARE_INT:
             remove_interupt_event();
-            
-#ifdef USE_COMPARE
-			Count+=2;
+
+#ifdef COMPARE_CORE
+            Count+=2;
             add_interupt_event_count(COMPARE_INT, Compare);
-			Count-=2;
-#endif       
+            Count-=2;
+#endif
             Cause = (Cause | 0x8000) & 0xFFFFFF83;
             if ((Status & 7) != 1) return;
             if (!(Status & Cause & 0xFF00)) return;
@@ -732,7 +731,7 @@ X11_PumpEvents();
             remove_interupt_event();
             sp_register.sp_status_reg |= 0x203;
             // sp_register.sp_status_reg |= 0x303;
-    
+
             if (!(sp_register.sp_status_reg & 0x40)) return; // !intr_on_break
             MI_register.mi_intr_reg |= 0x01;
             if (MI_register.mi_intr_reg & MI_register.mi_intr_mask_reg)
@@ -742,7 +741,7 @@ X11_PumpEvents();
             if ((Status & 7) != 1) return;
             if (!(Status & Cause & 0xFF00)) return;
             break;
-    
+
         case DP_INT:
             remove_interupt_event();
             dpc_register.dpc_status &= ~2;
