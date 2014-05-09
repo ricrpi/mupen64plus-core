@@ -31,6 +31,7 @@
 #include "memory/memory.h"
 #include "main/rom.h"
 #include "main/main.h"
+#include "main/profile.h"
 #include "main/savestates.h"
 #include "main/cheat.h"
 #include "osd/osd.h"
@@ -64,8 +65,6 @@
 
 extern uint32_t SDL_GetTicks();
 
-#define QUEUE_SIZE	32
-
 unsigned int next_vi;
 int vi_field=0;
 static int vi_counter=0;
@@ -79,59 +78,57 @@ typedef struct _interupt_queue
    struct _interupt_queue *next;
 } interupt_queue;
 
+#define QUEUE_SIZE	8
+
 static interupt_queue *q = NULL;
-
-//-------------------------------------------------------
-
 static interupt_queue *qstack[QUEUE_SIZE];
 static unsigned int qstackindex = 0;
 static interupt_queue *qbase = NULL;
 
 static interupt_queue* queue_malloc(size_t Bytes)
 {
-	if (qstackindex >= QUEUE_SIZE - 1) // should never happen
-	{
-		static int bNotified = 0;
+    if (qstackindex >= QUEUE_SIZE - 1) // should never happen
+    {
+        static int bNotified = 0;
 
-		if (!bNotified)
-		{
-			DebugMessage(M64MSG_VERBOSE, "/mupen64plus-core/src/4300/interupt.c: QUEUE_SIZE too small");
-			bNotified = 1;
-		}
+        if (!bNotified)
+        {
+            DebugMessage(M64MSG_VERBOSE, "/mupen64plus-core/src/4300/interupt.c: QUEUE_SIZE too small");
+            bNotified = 1;
+        }
 
- 		return malloc(Bytes);
-	}
-	interupt_queue* newQueue = qstack[qstackindex];
-	qstackindex ++;
+        return malloc(Bytes);
+    }
+    interupt_queue* newQueue = qstack[qstackindex];
+    qstackindex ++;
 
-	return newQueue;
+    return newQueue;
 }
 
 static void queue_free(interupt_queue *qToFree)
 {
-	if (qToFree < qbase || qToFree >= qbase + sizeof(interupt_queue) * QUEUE_SIZE )
-	{
-		free(qToFree); //must be a non-stack memory allocation
- 		return;
-	}	
-	/*if (qstackindex == 0 ) // should never happen
-	{
-		DebugMessage(M64MSG_ERROR, "Nothing to free");
- 		return;	
-	}*/
-	qstackindex --;
-	qstack[qstackindex] = qToFree;
+    if (qToFree < qbase || qToFree >= qbase + sizeof(interupt_queue) * QUEUE_SIZE )
+    {
+        free(qToFree); //must be a non-stack memory allocation
+        return;
+    }	
+	
+    qstackindex --;
+    qstack[qstackindex] = qToFree;
 }
-
-//-------------------------------------------------------
 
 static void clear_queue(void)
 {
+    int i;
     while(q != NULL)
     {
         interupt_queue *aux = q->next;
         queue_free(q);
         q = aux;
+    }
+    for (i =0; i < QUEUE_SIZE; i++)
+    {
+        qstack[i] = &qbase[i];
     }
 }
 
@@ -154,40 +151,19 @@ static int SPECIAL_done = 0;
 
 static int before_event(unsigned int evt1, unsigned int evt2, int type2)
 {
-#ifdef NEW_COUNT
-	// if evt1 is on next loop of Count, not this one then
-	if (evt1 > Count)
-	{
-		if (evt2 > Count)
-		{
-			return (evt1 < evt2);
-		}else
-		{
-			if ((Count - evt2) < 0x10000000 && type2 == SPECIAL_INT && SPECIAL_done) return 1;
-			return 0;
-		}
-	} 
-	else
-	{
-		return 0;
-	}
-#else
-	//is evt1 after Count
     if(evt1 - Count < 0x80000000)
     {
-		//is evt2 after Count
         if(evt2 - Count < 0x80000000)
         {
-            if(evt1 < evt2) return 1;
+            if((evt1 - Count) < (evt2 - Count)) return 1;
             else return 0;
         }
         else
         {
-			//if Count < evt2+0x10000000
             if((Count - evt2) < 0x10000000)
             {
 #ifdef USE_SPECIAL
- 				switch(type2)
+                switch(type2)
                 {
                     case SPECIAL_INT:
                         if(SPECIAL_done) return 1;
@@ -197,23 +173,18 @@ static int before_event(unsigned int evt1, unsigned int evt2, int type2)
                         return 0;
                 }
 #else
-			return 0;
+                return 0;
 #endif
             }
             else return 1;
         }
     }
     else return 0;
-#endif
 }
 
 void add_interupt_event(int type, unsigned int delay)
 {
-#ifdef NEW_COUNT
-	unsigned int count = ((Count + delay) & 0x0FFFFFFF);
-#else
     unsigned int count = Count + delay/**2*/;
-#endif
 #ifdef USE_SPECIAL
     int special = 0;
 #endif
@@ -244,7 +215,7 @@ void add_interupt_event(int type, unsigned int delay)
 #ifdef USE_SPECIAL
     if(before_event(count, q->count, q->type) && !special)
 #else
-	if(before_event(count, q->count, q->type))
+    if(before_event(count, q->count, q->type))
 #endif
     {
         q = (interupt_queue *) queue_malloc(sizeof(interupt_queue));
@@ -403,54 +374,40 @@ int save_eventqueue_infos(char *buf)
 void load_eventqueue_infos(char *buf)
 {
     int len = 0;
-    int i=0;
-	
-	clear_queue();
-
-	//load the stack with the addresses of available slots
-	for (i =0; i < QUEUE_SIZE; i++)
-	{
-		qstack[i] = &qbase[i];
-	}
-
+    clear_queue();
     while (*((unsigned int*)&buf[len]) != 0xFFFFFFFF)
     {
         int type = *((unsigned int*)&buf[len]);
         unsigned int count = *((unsigned int*)&buf[len+4]);
         
-		switch (type)
-		{
-			#ifdef COMPARE_CORE
-			case COMPARE_INT:	add_interupt_event_count(COMPARE_INT, count); break;
-			#endif
-			#ifdef USE_SPECIAL
-			case SPECIAL_INT:	add_interupt_event_count(SPECIAL_INT, count); break;
-			#endif
-			#ifdef USE_CHECK
-			case CHECK_INT:	add_interupt_event_count(CHECK_INT, count); break;
-			#endif
-			default: add_interupt_event_count(type, count);
-		}        
-		len += 8;
+        switch (type)
+        {
+		#ifdef COMPARE_CORE
+		case COMPARE_INT:	add_interupt_event_count(COMPARE_INT, count); break;
+		#endif
+		#ifdef USE_SPECIAL
+		case SPECIAL_INT:	add_interupt_event_count(SPECIAL_INT, count); break;
+		#endif
+		#ifdef USE_CHECK
+		case CHECK_INT:	add_interupt_event_count(CHECK_INT, count); break;
+		#endif
+		default: add_interupt_event_count(type, count);
+        }        
+        len += 8;
     }
 }
 
 void init_interupt(void)
 {
- 	if (qbase != NULL) free(qbase);
-	qbase = (interupt_queue *) malloc(sizeof(interupt_queue) * QUEUE_SIZE );
-	memset(qbase,0,sizeof(interupt_queue) * QUEUE_SIZE );
-    qstackindex=0;
-	int i=0;
-
-	//load the stack with the addresses of available slots
-	for (i =0; i < QUEUE_SIZE; i++)
-	{
-		qstack[i] = &qbase[i];
-	}
 #ifdef USE_SPECIAL
 	SPECIAL_done = 1;
 #endif
+    if (qbase != NULL) free(qbase);
+    qbase = (interupt_queue *) malloc(sizeof(interupt_queue) * QUEUE_SIZE );
+    memset(qbase,0,sizeof(interupt_queue) * QUEUE_SIZE );
+    qstackindex=0;
+    clear_queue();
+
     next_vi = next_interupt = 5000;
     vi_register.vi_delay = next_vi;
     vi_field = 0;
@@ -463,14 +420,11 @@ void init_interupt(void)
 
 void check_interupt(void)
 {
-	//DEBUG_PRINT("check_interupt\n");
-
     if (MI_register.mi_intr_reg & MI_register.mi_intr_mask_reg)
         Cause = (Cause | 0x400) & 0xFFFFFF83;
     else
         Cause &= ~0x400;
     if ((Status & 7) != 1) return;
-
 #ifdef USE_CHECK
     if (Status & Cause & 0xFF00)
     {
@@ -523,17 +477,6 @@ void X11_PumpEvents()
 
 void gen_interupt(void)
 {
-	/*static int count=0, time=0;
-	count++;
-
-	if (count >= 500)
-	{
-		double f = (500.0)/(SDL_GetTicks() - time);
-		DebugMessage(M64MSG_INFO, "gen_interrupt: %.3fKHz", f);
-		count = 0;
-		time = SDL_GetTicks();
-	}*/
-
     if (stop == 1)
     {
         vi_counter = 0; // debug
@@ -560,20 +503,17 @@ void gen_interupt(void)
     {
         unsigned int dest = skip_jump;
         skip_jump = 0;
-#ifdef NEW_COUNT
-		next_interupt = q->count;
-#else
-		if (q->count > Count || (Count - q->count) < 0x80000000)
-			next_interupt = q->count;
+
+        if (q->count > Count || (Count - q->count) < 0x80000000)
+            next_interupt = q->count;
         else
             next_interupt = 0;
-#endif  
-
+ 
         last_addr = dest;
         generic_jump_to(dest);
         return;
     }
-	//DEBUG_PRINT("gen_interupt() %d, Count = %d\n", q->type, Count);
+
     switch(q->type)
     {
         case SPECIAL_INT:
@@ -600,9 +540,9 @@ void gen_interupt(void)
             lircCheckInput();
 #endif
             SDL_PumpEvents();
-X11_PumpEvents();
+            X11_PumpEvents();
 
-            refresh_stat();
+            timed_sections_refresh();
 
             // if paused, poll for input events
             if(rompause)
@@ -613,7 +553,7 @@ X11_PumpEvents();
                 {
                     SDL_Delay(10);
                     SDL_PumpEvents();
-X11_PumpEvents();
+                    X11_PumpEvents();
 #ifdef WITH_LIRC
                     lircCheckInput();
 #endif //WITH_LIRC
@@ -621,14 +561,8 @@ X11_PumpEvents();
             }
 
             new_vi();
-            if (vi_register.vi_v_sync == 0)
-			{
-				vi_register.vi_delay = 500000;
-			}
-            else 
-			{
-				vi_register.vi_delay = ((vi_register.vi_v_sync + 1)*1500);
-			}
+            if (vi_register.vi_v_sync == 0) vi_register.vi_delay = 500000;	
+            else vi_register.vi_delay = ((vi_register.vi_v_sync + 1)*1500);	
 
             next_vi += vi_register.vi_delay;
             if (vi_register.vi_status&0x40) vi_field=1-vi_field;
@@ -650,9 +584,9 @@ X11_PumpEvents();
             remove_interupt_event();
 
 #ifdef COMPARE_CORE
-            Count+=2;
+            Count+=count_per_op;
             add_interupt_event_count(COMPARE_INT, Compare);
-            Count-=2;
+            Count-=count_per_op;
 #endif
             Cause = (Cause | 0x8000) & 0xFFFFFF83;
             if ((Status & 7) != 1) return;
@@ -798,7 +732,6 @@ X11_PumpEvents();
             dyna_interp = 0;
             // set next instruction address to reset vector
             last_addr = 0xa4000040;
-			DEBUG_PRINT("generic_jump_to(0xa4000040)\n");
             generic_jump_to(0xa4000040);
             return;
 
@@ -810,7 +743,6 @@ X11_PumpEvents();
 
 #ifdef NEW_DYNAREC
     if (r4300emu == CORE_DYNAREC) {
-		DEBUG_PRINT("Setting PC for Dynarec %X\n", pcaddr);
         EPC = pcaddr;
         pcaddr = 0x80000180;
         Status |= 2;

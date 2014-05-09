@@ -48,7 +48,7 @@
 
 #define MAXBLOCK 4096
 #define MAX_OUTPUT_BLOCK_SIZE 262144
-#define CLOCK_DIVIDER 2
+#define CLOCK_DIVIDER count_per_op
 
 void *base_addr;
 
@@ -2742,7 +2742,7 @@ static void load_assemble(int i,struct regstat *i_regs)
   int s,th,tl,addr,map=-1,cache=-1;
   int offset;
   int jaddr=0;
-  int memtarget=0,c=0;
+  int memtarget,c=0;
   u_int hr,reglist=0;
   th=get_reg(i_regs->regmap,rt1[i]|64);
   tl=get_reg(i_regs->regmap,rt1[i]);
@@ -3015,7 +3015,7 @@ static void store_assemble(int i,struct regstat *i_regs)
   int addr,temp;
   int offset;
   int jaddr=0,type;
-  int memtarget=0,c=0;
+  int memtarget,c=0;
   int agr=AGEN1+(i&1);
   u_int hr,reglist=0;
   th=get_reg(i_regs->regmap,rs2[i]|64);
@@ -3202,7 +3202,7 @@ static void storelr_assemble(int i,struct regstat *i_regs)
 {
   int s,th,tl;
   int temp;
-  int temp2=0;
+  int temp2;
   int offset;
   int jaddr=0;
   int case1,case2,case3;
@@ -3883,7 +3883,7 @@ static void loop_preload(signed char pre[],signed char entry[])
 static void address_generation(int i,struct regstat *i_regs,signed char entry[])
 {
   if(itype[i]==LOAD||itype[i]==LOADLR||itype[i]==STORE||itype[i]==STORELR||itype[i]==C1LS) {
-    int ra=0;
+    int ra;
     int agr=AGEN1+(i&1);
     int mgr=MGEN1+(i&1);
     if(itype[i]==LOAD) {
@@ -4728,7 +4728,7 @@ static void do_ccstub(int n)
           emit_loadreg(rs2[i],s2l);
       #endif
       int hr=0;
-      int addr=0,alt=0,ntaddr=0;
+      int addr,alt,ntaddr;
       while(hr<HOST_REGS)
       {
         if(hr!=EXCLUDE_REG && hr!=HOST_CCREG &&
@@ -6104,7 +6104,7 @@ static void pagespan_assemble(int i,struct regstat *i_regs)
     s1h=s2h=-1;
   }
   int hr=0;
-  int addr=0,alt=0,ntaddr=0;
+  int addr,alt,ntaddr;
   if(i_regs->regmap[HOST_BTREG]<0) {addr=HOST_BTREG;}
   else {
     while(hr<HOST_REGS)
