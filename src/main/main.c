@@ -815,8 +815,9 @@ m64p_error main_run(void)
     /* call r4300 CPU core and run the game */
     r4300_reset_hard();
     r4300_reset_soft();
+    DebugMessage(M64MSG_INFO, "Starting emulation at %u", SDL_GetTicks());
     r4300_execute();
-
+    DebugMessage(M64MSG_INFO, "Stopping emulation at %u", SDL_GetTicks());
     /* now begin to shut down */
 #ifdef WITH_LIRC
     lircStop();
