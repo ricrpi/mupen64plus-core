@@ -59,6 +59,9 @@
 #include "r4300/interupt.h"
 #include "r4300/reset.h"
 
+#include <sched.h>
+#include <errno.h>
+
 #ifdef DBG
 #include "debugger/dbg_types.h"
 #include "debugger/debugger.h"
@@ -198,7 +201,8 @@ int main_set_core_defaults(void)
     ConfigSetDefaultString(g_CoreConfig, "SharedDataPath", "", "Path to a directory to search when looking for shared data files");
     ConfigSetDefaultBool(g_CoreConfig, "DelaySI", 1, "Delay interrupt after DMA SI read/write");
     ConfigSetDefaultInt(g_CoreConfig, "CountPerOp", 0, "Force number of cycles per emulated instruction");
-
+    ConfigSetDefaultInt(g_CoreConfig, "Scheduler", 10, "Scheduling policy. 0 for Standard (SCHED_OTHER), 1-99 RealTime FIFO policy with Priority of [N]");
+    
     /* handle upgrades */
     if (bUpgrade)
     {
@@ -743,6 +747,40 @@ m64p_error main_run(void)
     /* take the r4300 emulator mode from the config file at this point and cache it in a global variable */
     r4300emu = ConfigGetParamInt(g_CoreConfig, "R4300Emulator");
 
+    uint32_t SchedulerPriority = ConfigGetParamInt(g_CoreConfig, "Scheduler");
+	
+    if (SchedulerPriority > 0)
+    {
+        if (SchedulerPriority > sched_get_priority_max(SCHED_FIFO)) SchedulerPriority = 20;
+
+        struct sched_param sp;	
+        sp.sched_priority = SchedulerPriority;
+
+        if (!sched_setscheduler(0, SCHED_FIFO, &sp) )
+        {
+            DebugMessage(M64MSG_VERBOSE, "Running as SCHED_FIFO, priority %d", SchedulerPriority);
+        }
+        else
+        {
+            int e = errno;
+
+            switch (e)
+            {
+            case EINVAL:
+                DebugMessage(M64MSG_WARNING, "Could not run as SCHED_FIFO, priority %d, error EINVAL", SchedulerPriority);
+                break;
+            case EPERM:
+                DebugMessage(M64MSG_WARNING, "Could not run as SCHED_FIFO, priority %d, error EPERM", SchedulerPriority);
+                break;
+            case ESRCH:
+                DebugMessage(M64MSG_WARNING, "Could not run as SCHED_FIFO, priority %d, error ESRCH", SchedulerPriority);
+                break;
+            default:
+                DebugMessage(M64MSG_WARNING, "Could not run as SCHED_FIFO, priority %d, error %d", SchedulerPriority, e);
+            }
+        }
+    }
+
     /* set some other core parameters based on the config file values */
     savestates_set_autoinc_slot(ConfigGetParamBool(g_CoreConfig, "AutoStateSlotIncrement"));
     savestates_select_slot(ConfigGetParamInt(g_CoreConfig, "CurrentStateSlot"));
@@ -811,7 +849,9 @@ m64p_error main_run(void)
     /* call r4300 CPU core and run the game */
     r4300_reset_hard();
     r4300_reset_soft();
+    DebugMessage(M64MSG_INFO, "Starting emulation at %u", SDL_GetTicks());
     r4300_execute();
+    DebugMessage(M64MSG_INFO, "Stopping emulation at %u", SDL_GetTicks());
 
     /* now begin to shut down */
 #ifdef WITH_LIRC
