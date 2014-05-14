@@ -41,7 +41,8 @@
 
 #include "interupt.h"
 #include "r4300.h"
-#include "macros.h"
+#include "cached_interp.h"
+#include "cp0.h"
 #include "exception.h"
 #include "reset.h"
 #include "new_dynarec/new_dynarec.h"
@@ -78,7 +79,7 @@ typedef struct _interupt_queue
    struct _interupt_queue *next;
 } interupt_queue;
 
-#define QUEUE_SIZE	8
+#define QUEUE_SIZE     8
 
 static interupt_queue *q = NULL;
 static interupt_queue *qstack[QUEUE_SIZE];
@@ -87,49 +88,51 @@ static interupt_queue *qbase = NULL;
 
 static interupt_queue* queue_malloc(size_t Bytes)
 {
-    if (qstackindex >= QUEUE_SIZE - 1) // should never happen
-    {
-        static int bNotified = 0;
+       if (qstackindex >= QUEUE_SIZE) // should never happen
+       {
+               static int bNotified = 0;
 
-        if (!bNotified)
-        {
-            DebugMessage(M64MSG_VERBOSE, "/mupen64plus-core/src/4300/interupt.c: QUEUE_SIZE too small");
-            bNotified = 1;
-        }
+               if (!bNotified)
+               {
+                       DebugMessage(M64MSG_ERROR, "core interrupt queue too small!");
+                       bNotified = 1;
+               }
 
-        return malloc(Bytes);
-    }
-    interupt_queue* newQueue = qstack[qstackindex];
-    qstackindex ++;
+               return malloc(Bytes);
+       }
+       interupt_queue* newQueue = qstack[qstackindex];
+       qstackindex ++;
 
-    return newQueue;
+       return newQueue;
 }
 
 static void queue_free(interupt_queue *qToFree)
 {
-    if (qToFree < qbase || qToFree >= qbase + sizeof(interupt_queue) * QUEUE_SIZE )
-    {
-        free(qToFree); //must be a non-stack memory allocation
-        return;
-    }	
-	
-    qstackindex --;
-    qstack[qstackindex] = qToFree;
+       if (qToFree < qbase || qToFree >= qbase + sizeof(interupt_queue) * QUEUE_SIZE)
+       {
+               free(qToFree); //must be a non-stack memory allocation
+               return;
+       }
+       #ifdef DBG_CORE       
+       if (qstackindex == 0 ) // should never happen
+       {
+               DebugMessage(M64MSG_ERROR, "Nothing to free");
+               return; 
+       }
+       #endif
+       qstackindex --;
+       qstack[qstackindex] = qToFree;
 }
 
 static void clear_queue(void)
 {
     int i;
-    while(q != NULL)
-    {
-        interupt_queue *aux = q->next;
-        queue_free(q);
-        q = aux;
-    }
+    q = NULL;
     for (i =0; i < QUEUE_SIZE; i++)
     {
-        qstack[i] = &qbase[i];
+       qstack[i] = &qbase[i];
     }
+    qstackindex = NULL;
 }
 
 /*static void print_queue(void)
@@ -411,7 +414,12 @@ void init_interupt(void)
     next_vi = next_interupt = 5000;
     vi_register.vi_delay = next_vi;
     vi_field = 0;
-    //clear_queue();
+
+    if (qbase != NULL) free(qbase);
+    qbase = (interupt_queue *) malloc(sizeof(interupt_queue) * QUEUE_SIZE );
+    memset(qbase,0,sizeof(interupt_queue) * QUEUE_SIZE );
+    qstackindex=0;
+    clear_queue();
     add_interupt_event_count(VI_INT, next_vi);
 #ifdef USE_SPECIAL
     add_interupt_event_count(SPECIAL_INT, 0);
