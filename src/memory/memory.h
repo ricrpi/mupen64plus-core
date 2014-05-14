@@ -218,6 +218,18 @@ extern DPS_register dps_register;
 extern unsigned char *const rdramb;
 
 #ifndef M64P_BIG_ENDIAN
+#if !defined(NO_ASM) && defined(ARM)
+	static inline unsigned int sl(unsigned int a)
+	{
+		asm ("rev %0, %0"
+		: "+r" (a)
+		:
+		: );
+		return a;
+	}
+	//extern unsigned int sl(unsigned int);
+#else
+ 
 #define sl(mot) \
 ( \
 ((mot & 0x000000FF) << 24) | \
@@ -225,7 +237,7 @@ extern unsigned char *const rdramb;
 ((mot & 0x00FF0000) >>  8) | \
 ((mot & 0xFF000000) >> 24) \
 )
-
+#endif
 #define S8 3
 #define S16 2
 #define Sh16 1
