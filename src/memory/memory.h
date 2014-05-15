@@ -219,17 +219,15 @@ extern unsigned char *const rdramb;
 
 #ifndef M64P_BIG_ENDIAN
 #if !defined(NO_ASM) && defined(ARM)
-	static inline unsigned int sl(unsigned int a)
-	{
-		asm ("rev %0, %0"
-		: "+r" (a)
-		:
-		: );
-		return a;
-	}
-	//extern unsigned int sl(unsigned int);
+    static inline unsigned int sl(unsigned int a)
+    {
+        asm ("rev %0, %0"
+            : "+r" (a)
+            :
+            : );
+        return a;
+    }
 #else
- 
 #define sl(mot) \
 ( \
 ((mot & 0x000000FF) << 24) | \
