@@ -45,6 +45,15 @@
 #include "main/rom.h"
 #include "main/util.h"
 
+#ifdef ARM
+    void __aeabi_memcpy4(void*, void*, size_t);		//this is present in libc6 on Raspberry PI
+    #define MEMCPY4(...) __aeabi_memcpy4(__VA_ARGS__)
+#else
+    #define MEMCPY4(...) memcpy(__VA_ARGS__)
+#endif
+
+	
+
 static unsigned char sram[0x8000];
 int delay_si = 0;
 
@@ -100,7 +109,6 @@ static void sram_write_file(void)
 void dma_pi_read(void)
 {
     unsigned int i;
-
     if (pi_register.pi_cart_addr_reg >= 0x08000000
             && pi_register.pi_cart_addr_reg < 0x08010000)
     {
@@ -145,16 +153,19 @@ void dma_pi_write(void)
         {
             if (flashram_info.use_flashram != 1)
             {
-                int i;
-
                 sram_read_file();
-
-                for (i=0; i<(int)(pi_register.pi_wr_len_reg & 0xFFFFFF)+1; i++)
+                
+                if ((pi_register.pi_cart_addr_reg || pi_register.pi_dram_addr_reg || (int)(pi_register.pi_wr_len_reg + 1)) & 3)
                 {
-                    ((unsigned char*)rdram)[(pi_register.pi_dram_addr_reg+i)^S8]=
-                        sram[(((pi_register.pi_cart_addr_reg-0x08000000)&0xFFFF)+i)^S8];
+                    int i;
+                    for (i=0; i<(int)(pi_register.pi_wr_len_reg & 0xFFFFFF)+1; i++)
+                    {
+                        ((unsigned char*)rdram)[(pi_register.pi_dram_addr_reg+i)^S8]=
+                            sram[(((pi_register.pi_cart_addr_reg-0x08000000)&0xFFFF)+i)^S8];
+                    }
+                }else{
+                    MEMCPY4(((unsigned char*)rdram) + pi_register.pi_dram_addr_reg, sram + ((pi_register.pi_cart_addr_reg-0x08000000)&0xFFFF), (int)(pi_register.pi_wr_len_reg & 0xFFFFFF)+1);
                 }
-
                 flashram_info.use_flashram = -1;
             }
             else
@@ -205,42 +216,78 @@ void dma_pi_write(void)
 
     if (r4300emu != CORE_PURE_INTERPRETER)
     {
-        for (i=0; i<(int)longueur; i++)
-        {
-            unsigned long rdram_address1 = pi_register.pi_dram_addr_reg+i+0x80000000;
-            unsigned long rdram_address2 = pi_register.pi_dram_addr_reg+i+0xa0000000;
-            ((unsigned char*)rdram)[(pi_register.pi_dram_addr_reg+i)^S8]=
-                rom[(((pi_register.pi_cart_addr_reg-0x10000000)&0x3FFFFFF)+i)^S8];
+	if ((longueur || pi_register.pi_dram_addr_reg || pi_register.pi_cart_addr_reg) & 3){
+            for (i=0; i<(int)longueur; i++)
+            {
+                unsigned long rdram_address1 = pi_register.pi_dram_addr_reg+i+0x80000000;
+                unsigned long rdram_address2 = pi_register.pi_dram_addr_reg+i+0xa0000000;
+                ((unsigned char*)rdram)[(pi_register.pi_dram_addr_reg+i)^S8]=
+                    rom[(((pi_register.pi_cart_addr_reg-0x10000000)&0x3FFFFFF)+i)^S8];
 
-            if (!invalid_code[rdram_address1>>12])
-            {
-                if (!blocks[rdram_address1>>12] ||
-                    blocks[rdram_address1>>12]->block[(rdram_address1&0xFFF)/4].ops !=
-                    current_instruction_table.NOTCOMPILED)
+                if (!invalid_code[rdram_address1>>12])
                 {
-                    invalid_code[rdram_address1>>12] = 1;
-                }
+                    if (!blocks[rdram_address1>>12] ||
+                        blocks[rdram_address1>>12]->block[(rdram_address1&0xFFF)/4].ops !=
+                        current_instruction_table.NOTCOMPILED)
+                    {
+                        invalid_code[rdram_address1>>12] = 1;
+                    }
 #ifdef NEW_DYNAREC
-                invalidate_block(rdram_address1>>12);
+                    invalidate_block(rdram_address1>>12);
 #endif
-            }
-            if (!invalid_code[rdram_address2>>12])
-            {
-                if (!blocks[rdram_address1>>12] ||
-                    blocks[rdram_address2>>12]->block[(rdram_address2&0xFFF)/4].ops !=
-                    current_instruction_table.NOTCOMPILED)
+                }
+                if (!invalid_code[rdram_address2>>12])
                 {
-                    invalid_code[rdram_address2>>12] = 1;
+                    if (!blocks[rdram_address1>>12] ||
+                        blocks[rdram_address2>>12]->block[(rdram_address2&0xFFF)/4].ops !=
+                        current_instruction_table.NOTCOMPILED)
+                    {
+                        invalid_code[rdram_address2>>12] = 1;
+                    }
                 }
             }
-        }
-    }
-    else
-    {
-        for (i=0; i<(int)longueur; i++)
+	}else{
+            for (i=0; i<(int)longueur/4; i++)
+            {
+                unsigned long rdram_address1 = pi_register.pi_dram_addr_reg+i*4+0x80000000;
+                unsigned long rdram_address2 = pi_register.pi_dram_addr_reg+i*4+0xa0000000;
+
+                rdram[(pi_register.pi_dram_addr_reg/4)+i]=
+                    ((unsigned int*)rom)[(((pi_register.pi_cart_addr_reg-0x10000000)&0x3FFFFFF)/4)+i];
+
+                if (!invalid_code[rdram_address1>>12])
+                {
+                    if (!blocks[rdram_address1>>12] ||
+                        blocks[rdram_address1>>12]->block[(rdram_address1&0xFFF)/4].ops !=
+                        current_instruction_table.NOTCOMPILED)
+                    {
+                        invalid_code[rdram_address1>>12] = 1;
+                    }
+#ifdef NEW_DYNAREC
+                    invalidate_block(rdram_address1>>12);
+#endif
+                }
+                if (!invalid_code[rdram_address2>>12])
+                {
+                    if (!blocks[rdram_address1>>12] ||
+                        blocks[rdram_address2>>12]->block[(rdram_address2&0xFFF)/4].ops !=
+                        current_instruction_table.NOTCOMPILED)
+                    {
+                        invalid_code[rdram_address2>>12] = 1;
+                    }
+                }
+            }
+	}
+    } else {
+        if ((longueur || pi_register.pi_dram_addr_reg || pi_register.pi_cart_addr_reg) & 3)
         {
-            ((unsigned char*)rdram)[(pi_register.pi_dram_addr_reg+i)^S8]=
-                rom[(((pi_register.pi_cart_addr_reg-0x10000000)&0x3FFFFFF)+i)^S8];
+            for (i=0; i<(int)longueur; i++)
+            {
+                ((unsigned char*)rdram)[(pi_register.pi_dram_addr_reg+i)^S8]=
+                    rom[(((pi_register.pi_cart_addr_reg-0x10000000)&0x3FFFFFF)+i)^S8];
+            }
+        } else {
+                MEMCPY4((unsigned char*)rdram + pi_register.pi_dram_addr_reg, rom + ((pi_register.pi_cart_addr_reg-0x10000000)&0x3FFFFFF), longueur);	
         }
     }
 
@@ -302,15 +349,24 @@ void dma_sp_write(void)
 
     unsigned char *spmem = ((sp_register.sp_mem_addr_reg & 0x1000) != 0) ? (unsigned char*)SP_IMEM : (unsigned char*)SP_DMEM;
     unsigned char *dram = (unsigned char*)rdram;
-
-    for(j=0; j<count; j++) {
-        for(i=0; i<length; i++) {
-            spmem[memaddr^S8] = dram[dramaddr^S8];
-            memaddr++;
-            dramaddr++;
+  
+    if ((memaddr || dramaddr || skip || length) & 3)
+    {
+        for(j=0; j<count; j++) {
+            for(i=0; i<length; i++) {
+                spmem[memaddr^S8] = dram[dramaddr^S8];
+                memaddr++;
+                dramaddr++;
+            }
+            dramaddr+=skip;
         }
-        dramaddr+=skip;
-    }
+    } else { // word-wise copy
+        for(j=0; j<count; j++) {
+            MEMCPY4(spmem + memaddr, dram + dramaddr, length);	
+            memaddr+=length;
+            dramaddr+=length + skip;
+        }
+   }
 }
 
 void dma_sp_read(void)
@@ -329,13 +385,22 @@ void dma_sp_read(void)
     unsigned char *spmem = ((sp_register.sp_mem_addr_reg & 0x1000) != 0) ? (unsigned char*)SP_IMEM : (unsigned char*)SP_DMEM;
     unsigned char *dram = (unsigned char*)rdram;
 
-    for(j=0; j<count; j++) {
-        for(i=0; i<length; i++) {
-            dram[dramaddr^S8] = spmem[memaddr^S8];
-            memaddr++;
-            dramaddr++;
+    if ((memaddr || dramaddr || skip || length) & 3)
+    {
+        for(j=0; j<count; j++) {
+            for(i=0; i<length; i++) {
+                dram[dramaddr^S8] = spmem[memaddr^S8];
+                memaddr++;
+                dramaddr++;
+            }
+            dramaddr+=skip;
         }
-        dramaddr+=skip;
+    }else{ // word-wise copy
+        for(j=0; j<count; j++) {
+            MEMCPY4(dram + dramaddr, spmem + memaddr, length);	
+            memaddr+=length;
+            dramaddr+=length + skip;
+        }
     }
 }
 
