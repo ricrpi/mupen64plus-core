@@ -350,7 +350,7 @@ void dma_sp_write(void)
     unsigned char *spmem = ((sp_register.sp_mem_addr_reg & 0x1000) != 0) ? (unsigned char*)SP_IMEM : (unsigned char*)SP_DMEM;
     unsigned char *dram = (unsigned char*)rdram;
   
-    if ((memaddr || dramaddr || skip || length) & 3)
+    if ((memaddr || dramaddr || skip) & 3)
     {
         for(j=0; j<count; j++) {
             for(i=0; i<length; i++) {
@@ -385,7 +385,7 @@ void dma_sp_read(void)
     unsigned char *spmem = ((sp_register.sp_mem_addr_reg & 0x1000) != 0) ? (unsigned char*)SP_IMEM : (unsigned char*)SP_DMEM;
     unsigned char *dram = (unsigned char*)rdram;
 
-    if ((memaddr || dramaddr || skip || length) & 3)
+    if ((memaddr || dramaddr || skip) & 3)
     {
         for(j=0; j<count; j++) {
             for(i=0; i<length; i++) {
