@@ -218,30 +218,14 @@ extern DPS_register dps_register;
 extern unsigned char *const rdramb;
 
 #ifndef M64P_BIG_ENDIAN
-#if !defined(NO_ASM) && defined(ARM)
-    static inline unsigned int sl(unsigned int a)
-    {
-        asm ("rev %0, %0"
-            : "+r" (a)
-            :
-            : );
-        return a;
-    }
-#else
-#define sl(mot) \
-( \
-((mot & 0x000000FF) << 24) | \
-((mot & 0x0000FF00) <<  8) | \
-((mot & 0x00FF0000) >>  8) | \
-((mot & 0xFF000000) >> 24) \
-)
-#endif
+#define sl(mot) __builtin_bswap32(mot)
+
 #define S8 3
 #define S16 2
 #define Sh16 1
 
 #else
-
+#warning "using Big endian"
 #define sl(mot) mot
 #define S8 0
 #define S16 0
