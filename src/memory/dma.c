@@ -45,7 +45,7 @@
 #include "main/rom.h"
 #include "main/util.h"
 
-#ifdef ARM
+#ifdef __arm__
     void __aeabi_memcpy4(void*, void*, size_t);		//this is present in libc6 on Raspberry PI
     #define MEMCPY4(...) __aeabi_memcpy4(__VA_ARGS__)
 #else
@@ -155,7 +155,7 @@ void dma_pi_write(void)
             {
                 sram_read_file();
                 
-                if ((pi_register.pi_cart_addr_reg || pi_register.pi_dram_addr_reg || (int)(pi_register.pi_wr_len_reg + 1)) & 3)
+                if ((pi_register.pi_cart_addr_reg | pi_register.pi_dram_addr_reg | (int)(pi_register.pi_wr_len_reg + 1)) & 3)
                 {
                     int i;
                     for (i=0; i<(int)(pi_register.pi_wr_len_reg & 0xFFFFFF)+1; i++)
@@ -216,7 +216,7 @@ void dma_pi_write(void)
 
     if (r4300emu != CORE_PURE_INTERPRETER)
     {
-	if ((longueur || pi_register.pi_dram_addr_reg || pi_register.pi_cart_addr_reg) & 3){
+	if ((longueur | pi_register.pi_dram_addr_reg | pi_register.pi_cart_addr_reg) & 3){
             for (i=0; i<(int)longueur; i++)
             {
                 unsigned long rdram_address1 = pi_register.pi_dram_addr_reg+i+0x80000000;
@@ -247,6 +247,38 @@ void dma_pi_write(void)
                 }
             }
 	}else{
+#if 1
+            MEMCPY4((unsigned char*)rdram + pi_register.pi_dram_addr_reg, rom + ((pi_register.pi_cart_addr_reg-0x10000000)&0x3FFFFFF), longueur);
+
+            for (i=0; i<(int)longueur; i+=4)
+            {
+                unsigned long rdram_address1 = pi_register.pi_dram_addr_reg+i+0x80000000;
+                unsigned long rdram_address2 = pi_register.pi_dram_addr_reg+i+0xa0000000;
+                
+                if (!invalid_code[rdram_address1>>12])
+                {
+                    if (!blocks[rdram_address1>>12] ||
+                        blocks[rdram_address1>>12]->block[(rdram_address1&0xFFF)/4].ops !=
+                        current_instruction_table.NOTCOMPILED)
+                    {
+                        invalid_code[rdram_address1>>12] = 1;
+                    }
+#ifdef NEW_DYNAREC
+                    invalidate_block(rdram_address1>>12);
+#endif
+                }
+                if (!invalid_code[rdram_address2>>12])
+                {
+                    if (!blocks[rdram_address1>>12] ||
+                        blocks[rdram_address2>>12]->block[(rdram_address2&0xFFF)/4].ops !=
+                        current_instruction_table.NOTCOMPILED)
+                    {
+                        invalid_code[rdram_address2>>12] = 1;
+                    }
+                }
+            }
+#else
+
             for (i=0; i<(int)longueur/4; i++)
             {
                 unsigned long rdram_address1 = pi_register.pi_dram_addr_reg+i*4+0x80000000;
@@ -277,9 +309,10 @@ void dma_pi_write(void)
                     }
                 }
             }
+#endif
 	}
     } else {
-        if ((longueur || pi_register.pi_dram_addr_reg || pi_register.pi_cart_addr_reg) & 3)
+        if ((longueur | pi_register.pi_dram_addr_reg | pi_register.pi_cart_addr_reg) & 3)
         {
             for (i=0; i<(int)longueur; i++)
             {
@@ -350,7 +383,7 @@ void dma_sp_write(void)
     unsigned char *spmem = ((sp_register.sp_mem_addr_reg & 0x1000) != 0) ? (unsigned char*)SP_IMEM : (unsigned char*)SP_DMEM;
     unsigned char *dram = (unsigned char*)rdram;
   
-    if ((memaddr || dramaddr || skip) & 3)
+    if ((memaddr | dramaddr | skip) & 3)
     {
         for(j=0; j<count; j++) {
             for(i=0; i<length; i++) {
@@ -385,7 +418,7 @@ void dma_sp_read(void)
     unsigned char *spmem = ((sp_register.sp_mem_addr_reg & 0x1000) != 0) ? (unsigned char*)SP_IMEM : (unsigned char*)SP_DMEM;
     unsigned char *dram = (unsigned char*)rdram;
 
-    if ((memaddr || dramaddr || skip) & 3)
+    if ((memaddr | dramaddr | skip) & 3)
     {
         for(j=0; j<count; j++) {
             for(i=0; i<length; i++) {
