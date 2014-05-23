@@ -108,8 +108,11 @@ endif
 # base CFLAGS, LDLIBS, and LDFLAGS
 OPTFLAGS ?= -flto
 WARNFLAGS ?= -Wall
-CFLAGS += $(OPTFLAGS) $(WARNFLAGS) -ffast-math -fno-strict-aliasing -fvisibility=hidden -I../../src -DM64P_PARALLEL 
-CXXFLAGS += -fvisibility-inlines-hidden
+RPIFLAGS= -fgcse-after-reload -finline-functions -fipa-cp-clone -funswitch-loops -fpredictive-commoning -ftree-loop-distribute-patterns -ftree-vectorize
+CFLAGS += $(OPTFLAGS) $(WARNFLAGS) $(RPIFLAGS) -ffast-math -fno-strict-aliasing -fvisibility=hidden -I../../src -DM64P_PARALLEL 
+CXXFLAGS += -fvisibility-inlines-hidden $(RPIFLAGS) 
+
+
 
 ifeq ("$(MACHINE)","armv6l")
 CFLAGS += -DARMv5_ONLY -I/opt/vc/include -I/opt/vc/include/interface/vcos/pthreads -I/opt/vc/include/interface/vmcs_host/linux
