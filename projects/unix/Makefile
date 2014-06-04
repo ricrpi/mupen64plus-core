@@ -108,7 +108,7 @@ endif
 # base CFLAGS, LDLIBS, and LDFLAGS
 OPTFLAGS ?= -flto
 WARNFLAGS ?= -Wall
-RPIFLAGS= -fgcse-after-reload -finline-functions -fipa-cp-clone -funswitch-loops -fpredictive-commoning -ftree-loop-distribute-patterns -ftree-vectorize
+RPIFLAGS ?= -fgcse-after-reload -finline-functions -fipa-cp-clone -funswitch-loops -fpredictive-commoning -ftree-loop-distribute-patterns -ftree-vectorize
 CFLAGS += $(OPTFLAGS) $(WARNFLAGS) $(RPIFLAGS) -ffast-math -fno-strict-aliasing -fvisibility=hidden -I../../src -DM64P_PARALLEL 
 CXXFLAGS += -fvisibility-inlines-hidden $(RPIFLAGS) 
 
