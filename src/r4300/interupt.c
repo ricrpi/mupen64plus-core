@@ -19,7 +19,7 @@
  *   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.          *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-#include <stdlib.h>
+#include <string.h>
 
 #include <SDL.h>
 
@@ -36,8 +36,6 @@
 #include "main/cheat.h"
 #include "osd/osd.h"
 #include "plugin/plugin.h"
-#include "api/rpiGLES.h"
-#include "main/eventloop.h"
 
 #include "interupt.h"
 #include "r4300.h"
@@ -51,121 +49,106 @@
 #include "main/lirc.h"
 #endif
 
-#include <unistd.h>
-
-//#define DEBUG_PRINT(...) printf(__VA_ARGS__)
-
-
-#ifndef DEBUG_PRINT
-#define DEBUG_PRINT(...)
-#endif
-
-#define USE_SPECIAL
-//#define USE_CHECK
-//#define NEW_COUNT
-
-extern uint32_t SDL_GetTicks();
-
 unsigned int next_vi;
 int vi_field=0;
 static int vi_counter=0;
 
 int interupt_unsafe_state = 0;
 
-typedef struct _interupt_queue
+struct interrupt_event
 {
-   int type;
-   unsigned int count;
-   struct _interupt_queue *next;
-} interupt_queue;
+    int type;
+    unsigned int count;
+};
 
-#define QUEUE_SIZE     8
 
-static interupt_queue *q = NULL;
-static interupt_queue *qstack[QUEUE_SIZE];
-static unsigned int qstackindex = 0;
-static interupt_queue *qbase = NULL;
+/***************************************************************************
+ * Pool of Single Linked List Nodes
+ **************************************************************************/
+#define POOL_CAPACITY 16
 
-static interupt_queue* queue_malloc(size_t Bytes)
+struct node
 {
-       if (qstackindex >= QUEUE_SIZE) // should never happen
-       {
-               static int bNotified = 0;
+    struct interrupt_event data;
+    struct node *next;
+};
 
-               if (!bNotified)
-               {
-                       DebugMessage(M64MSG_ERROR, "core interrupt queue too small!");
-                       bNotified = 1;
-               }
+struct pool
+{
+    struct node nodes[POOL_CAPACITY];
+    struct node* stack[POOL_CAPACITY];
+    size_t index;
+};
 
-               return malloc(Bytes);
-       }
-       interupt_queue* newQueue = qstack[qstackindex];
-       qstackindex ++;
+static struct node* alloc_node(struct pool* p);
+static void free_node(struct pool* p, struct node* node);
+static void clear_pool(struct pool* p);
 
-       return newQueue;
+
+/* node allocation/deallocation on a given pool */
+static struct node* alloc_node(struct pool* p)
+{
+    /* return NULL if pool is too small */
+    if (p->index >= POOL_CAPACITY)
+        return NULL;
+
+    return p->stack[p->index++];
 }
 
-static void queue_free(interupt_queue *qToFree)
+static void free_node(struct pool* p, struct node* node)
 {
-       if (qToFree < qbase || qToFree >= qbase + sizeof(interupt_queue) * QUEUE_SIZE)
-       {
-               free(qToFree); //must be a non-stack memory allocation
-               return;
-       }
-       #ifdef DBG_CORE       
-       if (qstackindex == 0 ) // should never happen
-       {
-               DebugMessage(M64MSG_ERROR, "Nothing to free");
-               return; 
-       }
-       #endif
-       qstackindex --;
-       qstack[qstackindex] = qToFree;
+    if (p->index == 0 || node == NULL)
+        return;
+
+    p->stack[--p->index] = node;
 }
+
+/* release all nodes */
+static void clear_pool(struct pool* p)
+{
+    size_t i;
+
+    for(i = 0; i < POOL_CAPACITY; ++i)
+        p->stack[i] = &p->nodes[i];
+
+    p->index = 0;
+}
+
+/***************************************************************************
+ * Interrupt Queue
+ **************************************************************************/
+
+struct interrupt_queue
+{
+    struct pool pool;
+    struct node* first;
+};
+
+static struct interrupt_queue q;
+
 
 static void clear_queue(void)
 {
-    int i;
-    q = NULL;
-    for (i =0; i < QUEUE_SIZE; i++)
-    {
-       qstack[i] = &qbase[i];
-    }
-    qstackindex = NULL;
+    q.first = NULL;
+    clear_pool(&q.pool);
 }
 
-/*static void print_queue(void)
-{
-    interupt_queue *aux;
-    //if (Count < 0x7000000) return;
-    DebugMessage(M64MSG_INFO, "------------------ 0x%x", (unsigned int)Count);
-    aux = q;
-    while (aux != NULL)
-    {
-        DebugMessage(M64MSG_INFO, "Count:%x, %x", (unsigned int)aux->count, aux->type);
-        aux = aux->next;
-    }
-}*/
 
-#ifdef USE_SPECIAL
 static int SPECIAL_done = 0;
-#endif
 
 static int before_event(unsigned int evt1, unsigned int evt2, int type2)
 {
-    if(evt1 - Count < 0x80000000)
+    if(evt1 - g_cp0_regs[CP0_COUNT_REG] < 0x80000000)
     {
-        if(evt2 - Count < 0x80000000)
+        if(evt2 - g_cp0_regs[CP0_COUNT_REG] < 0x80000000)
         {
-            if((evt1 - Count) < (evt2 - Count)) return 1;
+            if((evt1 - g_cp0_regs[CP0_COUNT_REG]) < (evt2 - g_cp0_regs[CP0_COUNT_REG])) return 1;
             else return 0;
         }
         else
         {
-            if((Count - evt2) < 0x10000000)
+            if((g_cp0_regs[CP0_COUNT_REG] - evt2) < 0x10000000)
             {
-#ifdef USE_SPECIAL
                 switch(type2)
                 {
                     case SPECIAL_INT:
@@ -175,9 +158,6 @@ static int before_event(unsigned int evt1, unsigned int evt2, int type2)
                     default:
                         return 0;
                 }
-#else
-                return 0;
-#endif
             }
             else return 1;
         }
@@ -187,189 +167,170 @@ static int before_event(unsigned int evt1, unsigned int evt2, int type2)
 
 void add_interupt_event(int type, unsigned int delay)
 {
-    unsigned int count = Count + delay/**2*/;
-#ifdef USE_SPECIAL
-    int special = 0;
-#endif
-    interupt_queue *aux = q;
-
-#ifdef USE_SPECIAL
-    if(type == SPECIAL_INT /*|| type == COMPARE_INT*/) special = 1;
-	if(Count > 0x80000000) SPECIAL_done = 0;
-#endif
-
-	DEBUG_PRINT("add_interupt_event() type %d, at %u, Count %u\n",type,count, Count);
-
-    if (get_event(type)) {
-        DebugMessage(M64MSG_WARNING, "two events of type 0x%x in interrupt queue", type);
-    }
-   
-    if (q == NULL)
-    {
-        q = (interupt_queue *) queue_malloc(sizeof(interupt_queue));
-        q->next = NULL;
-        q->count = count;
-        q->type = type;
-        next_interupt = q->count;
-        //print_queue();
-        return;
-    }
-   
-#ifdef USE_SPECIAL
-    if(before_event(count, q->count, q->type) && !special)
-#else
-    if(before_event(count, q->count, q->type))
-#endif
-    {
-        q = (interupt_queue *) queue_malloc(sizeof(interupt_queue));
-        q->next = aux;
-        q->count = count;
-        q->type = type;
-        next_interupt = q->count;
-        //print_queue();
-        return;
-    }
-   
-//if not at end of list and (count is after next item of type or special) then get next
-#ifdef USE_SPECIAL
-    while (aux->next != NULL && (!before_event(count, aux->next->count, aux->next->type) || special))
-#else
-    while (aux->next != NULL && (!before_event(count, aux->next->count, aux->next->type)))
-#endif
-    {
-		aux = aux->next;
-	}   
-
-    if (aux->next == NULL)
-    {
-        aux->next = (interupt_queue *) queue_malloc(sizeof(interupt_queue));
-        aux = aux->next;
-        aux->next = NULL;
-        aux->count = count;
-        aux->type = type;
-    }
-    else
-    {
-        interupt_queue *aux2;
-#ifdef USE_SPECIAL
-        if (type != SPECIAL_INT)
-#endif
-            while(aux->next != NULL && aux->next->count == count)
-                aux = aux->next;
-        aux2 = aux->next;
-        aux->next = (interupt_queue *) queue_malloc(sizeof(interupt_queue));
-        aux = aux->next;
-        aux->next = aux2;
-        aux->count = count;
-        aux->type = type;
-    }
+    add_interupt_event_count(type, g_cp0_regs[CP0_COUNT_REG] + delay);
 }
 
 void add_interupt_event_count(int type, unsigned int count)
 {
-    add_interupt_event(type, (count - Count)/*/2*/);
+    struct node* event;
+    struct node* e;
+    int special;
+
+    special = (type == SPECIAL_INT);
+   
+    if(g_cp0_regs[CP0_COUNT_REG] > 0x80000000) SPECIAL_done = 0;
+   
+    if (get_event(type)) {
+        DebugMessage(M64MSG_WARNING, "two events of type 0x%x in interrupt queue", type);
+        /* FIXME: hack-fix for freezing in Perfect Dark
+         * http://code.google.com/p/mupen64plus/issues/detail?id=553
+         * https://github.com/mupen64plus-ae/mupen64plus-ae/commit/802d8f81d46705d64694d7a34010dc5f35787c7d
+         */
+        return;
+    }
+
+    event = alloc_node(&q.pool);
+    if (event == NULL)
+    {
+        DebugMessage(M64MSG_ERROR, "Failed to allocate node for new interrupt event");
+        return;
+    }
+
+    event->data.count = count;
+    event->data.type = type;
+
+    if (q.first == NULL)
+    {
+        q.first = event;
+        event->next = NULL;
+        next_interupt = q.first->data.count;
+    }
+    else if (before_event(count, q.first->data.count, q.first->data.type) && !special)
+    {
+        event->next = q.first;
+        q.first = event;
+        next_interupt = q.first->data.count;
+    }
+    else
+    {
+        for(e = q.first;
+            e->next != NULL &&
+            (!before_event(count, e->next->data.count, e->next->data.type) || special);
+            e = e->next);
+
+        if (e->next == NULL)
+        {
+            e->next = event;
+            event->next = NULL;
+        }
+        else
+        {
+            if (!special)
+                for(; e->next != NULL && e->next->data.count == count; e = e->next);
+
+            event->next = e->next;
+            e->next = event;
+        }
+    }
 }
 
 static void remove_interupt_event(void)
 {
-	//DEBUG_PRINT("remove_interupt_event %d\n",q->type);
+    struct node* e;
 
-    interupt_queue *aux = q->next;
-#ifdef USE_SPECIAL
-    if(q->type == SPECIAL_INT) SPECIAL_done = 1;
-#endif
-    queue_free(q);
-    q = aux;
+    if (q.first->data.type == SPECIAL_INT)
+        SPECIAL_done = 1;
 
-#ifdef NEW_COUNT
-	if (q != NULL)
-#else
-    if (q != NULL && (q->count > Count || (Count - q->count) < 0x80000000))
-#endif
-        next_interupt = q->count;
-    else
-        next_interupt = 0;
+    e = q.first;
+    q.first = e->next;
+    free_node(&q.pool, e);
+
+    next_interupt = (q.first != NULL
+         && (q.first->data.count > g_cp0_regs[CP0_COUNT_REG]
+         || (g_cp0_regs[CP0_COUNT_REG] - q.first->data.count) < 0x80000000))
+        ? q.first->data.count
+        : 0;
 }
 
 unsigned int get_event(int type)
 {
-    interupt_queue *aux = q;
-    if (q == NULL) return 0;
-    if (q->type == type)
-        return q->count;
-    while (aux->next != NULL && aux->next->type != type)
-        aux = aux->next;
-    if (aux->next != NULL)
-        return aux->next->count;
-    return 0;
+    struct node* e = q.first;
+
+    if (e == NULL)
+        return 0;
+
+    if (e->data.type == type)
+        return e->data.count;
+
+    for(; e->next != NULL && e->next->data.type != type; e = e->next);
+
+    return (e->next != NULL)
+        ? e->next->data.count
+        : 0;
 }
 
 int get_next_event_type(void)
 {
-    if (q == NULL) return 0;
-    return q->type;
+    return (q.first == NULL)
+        ? 0
+        : q.first->data.type;
 }
 
 void remove_event(int type)
 {
-    interupt_queue *aux = q;
-    if (q == NULL) return;
-    if (q->type == type)
-    {
-        aux = aux->next;
-        queue_free(q);
-        q = aux;
+    struct node* to_del;
+    struct node* e = q.first;
+
+    if (e == NULL)
         return;
-    }
-    while (aux->next != NULL && aux->next->type != type)
-        aux = aux->next;
-    if (aux->next != NULL) // it's a type int
+
+    if (e->data.type == type)
     {
-        interupt_queue *aux2 = aux->next->next;
-        queue_free(aux->next);
-        aux->next = aux2;
+        q.first = e->next;
+        free_node(&q.pool, e);
+    }
+    else
+    {
+        for(; e->next != NULL && e->next->data.type != type; e = e->next);
+
+        if (e->next != NULL)
+        {
+            to_del = e->next;
+            e->next = to_del->next;
+            free_node(&q.pool, to_del);
+        }
     }
 }
 
 void translate_event_queue(unsigned int base)
 {
-    interupt_queue *aux;
+    struct node* e;
+
     remove_event(COMPARE_INT);
     remove_event(SPECIAL_INT);
-    aux=q;
-    while (aux != NULL)
+
+    for(e = q.first; e != NULL; e = e->next)
     {
-#ifdef NEW_COUNT
-		aux->count = ((aux->count - Count)+base)& 0x7FFFFFFF;
-#else
-        aux->count = (aux->count - Count)+base;
-#endif
-        aux = aux->next;
+        e->data.count = (e->data.count - g_cp0_regs[CP0_COUNT_REG]) + base;
     }
-#ifdef COMPARE_CORE
-    add_interupt_event_count(COMPARE_INT, Compare);
-#endif
-#ifdef USE_SPECIAL
+    add_interupt_event_count(COMPARE_INT, g_cp0_regs[CP0_COMPARE_REG]);
     add_interupt_event_count(SPECIAL_INT, 0);
-#endif
 }
 
 int save_eventqueue_infos(char *buf)
 {
-    int len = 0;
-    interupt_queue *aux = q;
-    if (q == NULL)
+    int len;
+    struct node* e;
+
+    len = 0;
+
+    for(e = q.first; e != NULL; e = e->next)
     {
-        *((unsigned int*)&buf[0]) = 0xFFFFFFFF;
-        return 4;
-    }
-    while (aux != NULL)
-    {
-        memcpy(buf+len  , &aux->type , 4);
-        memcpy(buf+len+4, &aux->count, 4);
+        memcpy(buf + len    , &e->data.type , 4);
+        memcpy(buf + len + 4, &e->data.count, 4);
         len += 8;
-        aux = aux->next;
     }
+
     *((unsigned int*)&buf[len]) = 0xFFFFFFFF;
     return len+4;
 }
@@ -382,105 +343,57 @@ void load_eventqueue_infos(char *buf)
     {
         int type = *((unsigned int*)&buf[len]);
         unsigned int count = *((unsigned int*)&buf[len+4]);
-        
-        switch (type)
-        {
-		#ifdef COMPARE_CORE
-		case COMPARE_INT:	add_interupt_event_count(COMPARE_INT, count); break;
-		#endif
-		#ifdef USE_SPECIAL
-		case SPECIAL_INT:	add_interupt_event_count(SPECIAL_INT, count); break;
-		#endif
-		#ifdef USE_CHECK
-		case CHECK_INT:	add_interupt_event_count(CHECK_INT, count); break;
-		#endif
-		default: add_interupt_event_count(type, count);
-        }        
+        add_interupt_event_count(type, count);
         len += 8;
     }
 }
 
 void init_interupt(void)
 {
-#ifdef USE_SPECIAL
-	SPECIAL_done = 1;
-#endif
-    if (qbase != NULL) free(qbase);
-    qbase = (interupt_queue *) malloc(sizeof(interupt_queue) * QUEUE_SIZE );
-    memset(qbase,0,sizeof(interupt_queue) * QUEUE_SIZE );
-    qstackindex=0;
-    clear_queue();
-
+    SPECIAL_done = 1;
     next_vi = next_interupt = 5000;
     vi_register.vi_delay = next_vi;
     vi_field = 0;
 
-    if (qbase != NULL) free(qbase);
-    qbase = (interupt_queue *) malloc(sizeof(interupt_queue) * QUEUE_SIZE );
-    memset(qbase,0,sizeof(interupt_queue) * QUEUE_SIZE );
-    qstackindex=0;
     clear_queue();
     add_interupt_event_count(VI_INT, next_vi);
-#ifdef USE_SPECIAL
     add_interupt_event_count(SPECIAL_INT, 0);
-#endif
 }
 
 void check_interupt(void)
 {
+    struct node* event;
+
     if (MI_register.mi_intr_reg & MI_register.mi_intr_mask_reg)
-        Cause = (Cause | 0x400) & 0xFFFFFF83;
+        g_cp0_regs[CP0_CAUSE_REG] = (g_cp0_regs[CP0_CAUSE_REG] | 0x400) & 0xFFFFFF83;
     else
-        Cause &= ~0x400;
-    if ((Status & 7) != 1) return;
-#ifdef USE_CHECK
-    if (Status & Cause & 0xFF00)
+        g_cp0_regs[CP0_CAUSE_REG] &= ~0x400;
+    if ((g_cp0_regs[CP0_STATUS_REG] & 7) != 1) return;
+    if (g_cp0_regs[CP0_STATUS_REG] & g_cp0_regs[CP0_CAUSE_REG] & 0xFF00)
     {
-        if(q == NULL)
+        event = alloc_node(&q.pool);
+
+        if (event == NULL)
         {
-            q = (interupt_queue *) queue_malloc(sizeof(interupt_queue));
-            q->next = NULL;
-            q->count = Count;
-            q->type = CHECK_INT;
+            DebugMessage(M64MSG_ERROR, "Failed to allocate node for new interrupt event");
+            return;
+        }
+
+        event->data.count = next_interupt = g_cp0_regs[CP0_COUNT_REG];
+        event->data.type = CHECK_INT;
+
+        if (q.first == NULL)
+        {
+            q.first = event;
+            event->next = NULL;
         }
         else
         {
-            interupt_queue* aux = (interupt_queue *) queue_malloc(sizeof(interupt_queue));
-            aux->next = q;
-            aux->count = Count;
-            aux->type = CHECK_INT;
-            q = aux;
+            event->next = q.first;
+            q.first = event;
+
         }
-        next_interupt = Count;
     }
-#endif
-}
-
-void X11_PumpEvents()
-{
- 	XEvent  xev;
-
-	while (RPI_NextXEvent(&xev) )
-	{   // check for events from the x-server
-		switch (xev.type)
-		{
-			case MotionNotify:   // if mouse has moved
-        				//xev.xmotion.x,xev.xmotion.y
-
-				break;
-			case ButtonPress:
-				// xev.xbutton.state, xev.xbutton.button << endl;
-				break;
-			case KeyPress:
-				event_sdl_keydown(xev.xkey.keycode, xev.xkey.state);
-				break;
-			case KeyRelease:
-				event_sdl_keyup(xev.xkey.keycode, xev.xkey.state);	//TODO is this correct?
-				break;
-			default:
-				break;
-		}
-	}
 }
 
 void gen_interupt(void)
@@ -506,30 +419,28 @@ void gen_interupt(void)
             return;
         }
     }
-
+   
     if (skip_jump)
     {
         unsigned int dest = skip_jump;
         skip_jump = 0;
 
-        if (q->count > Count || (Count - q->count) < 0x80000000)
-            next_interupt = q->count;
-        else
-            next_interupt = 0;
- 
+        next_interupt = (q.first->data.count > g_cp0_regs[CP0_COUNT_REG]
+                || (g_cp0_regs[CP0_COUNT_REG] - q.first->data.count) < 0x80000000)
+            ? q.first->data.count
+            : 0;
+
         last_addr = dest;
         generic_jump_to(dest);
         return;
-    }
+    } 
 
-    switch(q->type)
+    switch(q.first->data.type)
     {
         case SPECIAL_INT:
-            if (Count > 0x10000000) return;
+            if (g_cp0_regs[CP0_COUNT_REG] > 0x10000000) return;
             remove_interupt_event();
-#ifdef USE_SPECIAL
             add_interupt_event_count(SPECIAL_INT, 0);
-#endif
             return;
             break;
         case VI_INT:
@@ -548,7 +459,6 @@ void gen_interupt(void)
             lircCheckInput();
 #endif
             SDL_PumpEvents();
-            X11_PumpEvents();
 
             timed_sections_refresh();
 
@@ -561,7 +471,6 @@ void gen_interupt(void)
                 {
                     SDL_Delay(10);
                     SDL_PumpEvents();
-                    X11_PumpEvents();
 #ifdef WITH_LIRC
                     lircCheckInput();
 #endif //WITH_LIRC
@@ -569,71 +478,68 @@ void gen_interupt(void)
             }
 
             new_vi();
-            if (vi_register.vi_v_sync == 0) vi_register.vi_delay = 500000;	
-            else vi_register.vi_delay = ((vi_register.vi_v_sync + 1)*1500);	
-
+            if (vi_register.vi_v_sync == 0) vi_register.vi_delay = 500000;
+            else vi_register.vi_delay = ((vi_register.vi_v_sync + 1)*1500);
             next_vi += vi_register.vi_delay;
             if (vi_register.vi_status&0x40) vi_field=1-vi_field;
             else vi_field=0;
 
             remove_interupt_event();
             add_interupt_event_count(VI_INT, next_vi);
-
+    
             MI_register.mi_intr_reg |= 0x08;
             if (MI_register.mi_intr_reg & MI_register.mi_intr_mask_reg)
-                Cause = (Cause | 0x400) & 0xFFFFFF83;
+                g_cp0_regs[CP0_CAUSE_REG] = (g_cp0_regs[CP0_CAUSE_REG] | 0x400) & 0xFFFFFF83;
             else
                 return;
-            if ((Status & 7) != 1) return;
-            if (!(Status & Cause & 0xFF00)) return;
+            if ((g_cp0_regs[CP0_STATUS_REG] & 7) != 1) return;
+            if (!(g_cp0_regs[CP0_STATUS_REG] & g_cp0_regs[CP0_CAUSE_REG] & 0xFF00)) return;
             break;
-
+    
         case COMPARE_INT:
             remove_interupt_event();
-
-#ifdef COMPARE_CORE
-            Count+=count_per_op;
-            add_interupt_event_count(COMPARE_INT, Compare);
-            Count-=count_per_op;
-#endif
-            Cause = (Cause | 0x8000) & 0xFFFFFF83;
-            if ((Status & 7) != 1) return;
-            if (!(Status & Cause & 0xFF00)) return;
+            g_cp0_regs[CP0_COUNT_REG]+=count_per_op;
+            add_interupt_event_count(COMPARE_INT, g_cp0_regs[CP0_COMPARE_REG]);
+            g_cp0_regs[CP0_COUNT_REG]-=count_per_op;
+    
+            g_cp0_regs[CP0_CAUSE_REG] = (g_cp0_regs[CP0_CAUSE_REG] | 0x8000) & 0xFFFFFF83;
+            if ((g_cp0_regs[CP0_STATUS_REG] & 7) != 1) return;
+            if (!(g_cp0_regs[CP0_STATUS_REG] & g_cp0_regs[CP0_CAUSE_REG] & 0xFF00)) return;
             break;
-
+    
         case CHECK_INT:
             remove_interupt_event();
             break;
-
+    
         case SI_INT:
 #ifdef WITH_LIRC
             lircCheckInput();
 #endif //WITH_LIRC
             SDL_PumpEvents();
-            X11_PumpEvents();
-	    PIF_RAMb[0x3F] = 0x0;
+            PIF_RAMb[0x3F] = 0x0;
             remove_interupt_event();
             MI_register.mi_intr_reg |= 0x02;
             si_register.si_stat |= 0x1000;
             if (MI_register.mi_intr_reg & MI_register.mi_intr_mask_reg)
-                Cause = (Cause | 0x400) & 0xFFFFFF83;
+                g_cp0_regs[CP0_CAUSE_REG] = (g_cp0_regs[CP0_CAUSE_REG] | 0x400) & 0xFFFFFF83;
             else
                 return;
-            if ((Status & 7) != 1) return;
-            if (!(Status & Cause & 0xFF00)) return;
+            if ((g_cp0_regs[CP0_STATUS_REG] & 7) != 1) return;
+            if (!(g_cp0_regs[CP0_STATUS_REG] & g_cp0_regs[CP0_CAUSE_REG] & 0xFF00)) return;
             break;
+    
         case PI_INT:
             remove_interupt_event();
             MI_register.mi_intr_reg |= 0x10;
             pi_register.read_pi_status_reg &= ~3;
             if (MI_register.mi_intr_reg & MI_register.mi_intr_mask_reg)
-                Cause = (Cause | 0x400) & 0xFFFFFF83;
+                g_cp0_regs[CP0_CAUSE_REG] = (g_cp0_regs[CP0_CAUSE_REG] | 0x400) & 0xFFFFFF83;
             else
                 return;
-            if ((Status & 7) != 1) return;
-            if (!(Status & Cause & 0xFF00)) return;
+            if ((g_cp0_regs[CP0_STATUS_REG] & 7) != 1) return;
+            if (!(g_cp0_regs[CP0_STATUS_REG] & g_cp0_regs[CP0_CAUSE_REG] & 0xFF00)) return;
             break;
-
+    
         case AI_INT:
             if (ai_register.ai_status & 0x80000000) // full
             {
@@ -643,15 +549,14 @@ void gen_interupt(void)
                 ai_register.current_delay = ai_register.next_delay;
                 ai_register.current_len = ai_register.next_len;
                 add_interupt_event_count(AI_INT, ai_event+ai_register.next_delay);
-
-		DebugMessage(M64MSG_VERBOSE, "AI_INT");
+         
                 MI_register.mi_intr_reg |= 0x04;
                 if (MI_register.mi_intr_reg & MI_register.mi_intr_mask_reg)
-                    Cause = (Cause | 0x400) & 0xFFFFFF83;
+                    g_cp0_regs[CP0_CAUSE_REG] = (g_cp0_regs[CP0_CAUSE_REG] | 0x400) & 0xFFFFFF83;
                 else
                     return;
-                if ((Status & 7) != 1) return;
-                if (!(Status & Cause & 0xFF00)) return;
+                if ((g_cp0_regs[CP0_STATUS_REG] & 7) != 1) return;
+                if (!(g_cp0_regs[CP0_STATUS_REG] & g_cp0_regs[CP0_CAUSE_REG] & 0xFF00)) return;
             }
             else
             {
@@ -661,11 +566,11 @@ void gen_interupt(void)
                 //-------
                 MI_register.mi_intr_reg |= 0x04;
                 if (MI_register.mi_intr_reg & MI_register.mi_intr_mask_reg)
-                    Cause = (Cause | 0x400) & 0xFFFFFF83;
+                    g_cp0_regs[CP0_CAUSE_REG] = (g_cp0_regs[CP0_CAUSE_REG] | 0x400) & 0xFFFFFF83;
                 else
                     return;
-                if ((Status & 7) != 1) return;
-                if (!(Status & Cause & 0xFF00)) return;
+                if ((g_cp0_regs[CP0_STATUS_REG] & 7) != 1) return;
+                if (!(g_cp0_regs[CP0_STATUS_REG] & g_cp0_regs[CP0_CAUSE_REG] & 0xFF00)) return;
             }
             break;
 
@@ -673,36 +578,36 @@ void gen_interupt(void)
             remove_interupt_event();
             sp_register.sp_status_reg |= 0x203;
             // sp_register.sp_status_reg |= 0x303;
-
+    
             if (!(sp_register.sp_status_reg & 0x40)) return; // !intr_on_break
             MI_register.mi_intr_reg |= 0x01;
             if (MI_register.mi_intr_reg & MI_register.mi_intr_mask_reg)
-                Cause = (Cause | 0x400) & 0xFFFFFF83;
+                g_cp0_regs[CP0_CAUSE_REG] = (g_cp0_regs[CP0_CAUSE_REG] | 0x400) & 0xFFFFFF83;
             else
                 return;
-            if ((Status & 7) != 1) return;
-            if (!(Status & Cause & 0xFF00)) return;
+            if ((g_cp0_regs[CP0_STATUS_REG] & 7) != 1) return;
+            if (!(g_cp0_regs[CP0_STATUS_REG] & g_cp0_regs[CP0_CAUSE_REG] & 0xFF00)) return;
             break;
-
+    
         case DP_INT:
             remove_interupt_event();
             dpc_register.dpc_status &= ~2;
             dpc_register.dpc_status |= 0x81;
             MI_register.mi_intr_reg |= 0x20;
             if (MI_register.mi_intr_reg & MI_register.mi_intr_mask_reg)
-                Cause = (Cause | 0x400) & 0xFFFFFF83;
+                g_cp0_regs[CP0_CAUSE_REG] = (g_cp0_regs[CP0_CAUSE_REG] | 0x400) & 0xFFFFFF83;
             else
                 return;
-            if ((Status & 7) != 1) return;
-            if (!(Status & Cause & 0xFF00)) return;
+            if ((g_cp0_regs[CP0_STATUS_REG] & 7) != 1) return;
+            if (!(g_cp0_regs[CP0_STATUS_REG] & g_cp0_regs[CP0_CAUSE_REG] & 0xFF00)) return;
             break;
 
         case HW2_INT:
             // Hardware Interrupt 2 -- remove interrupt event from queue
             remove_interupt_event();
             // setup r4300 Status flags: reset TS, and SR, set IM2
-            Status = (Status & ~0x00380000) | 0x1000;
-            Cause = (Cause | 0x1000) & 0xFFFFFF83;
+            g_cp0_regs[CP0_STATUS_REG] = (g_cp0_regs[CP0_STATUS_REG] & ~0x00380000) | 0x1000;
+            g_cp0_regs[CP0_CAUSE_REG] = (g_cp0_regs[CP0_CAUSE_REG] | 0x1000) & 0xFFFFFF83;
             /* the exception_general() call below will jump to the interrupt vector (0x80000180) and setup the
              * interpreter or dynarec
              */
@@ -712,18 +617,18 @@ void gen_interupt(void)
             // Non Maskable Interrupt -- remove interrupt event from queue
             remove_interupt_event();
             // setup r4300 Status flags: reset TS and SR, set BEV, ERL, and SR
-            Status = (Status & ~0x00380000) | 0x00500004;
-            Cause  = 0x00000000;
+            g_cp0_regs[CP0_STATUS_REG] = (g_cp0_regs[CP0_STATUS_REG] & ~0x00380000) | 0x00500004;
+            g_cp0_regs[CP0_CAUSE_REG]  = 0x00000000;
             // simulate the soft reset code which would run from the PIF ROM
             r4300_reset_soft();
             // clear all interrupts, reset interrupt counters back to 0
-            Count = 0;
+            g_cp0_regs[CP0_COUNT_REG] = 0;
             vi_counter = 0;
             init_interupt();
             // clear the audio status register so that subsequent write_ai() calls will work properly
             ai_register.ai_status = 0;
             // set ErrorEPC with the last instruction address
-            ErrorEPC = PC->addr;
+            g_cp0_regs[CP0_ERROREPC_REG] = PC->addr;
             // reset the r4300 internal state
             if (r4300emu != CORE_PURE_INTERPRETER)
             {
@@ -734,7 +639,7 @@ void gen_interupt(void)
             // adjust ErrorEPC if we were in a delay slot, and clear the delay_slot and dyna_interp flags
             if(delay_slot==1 || delay_slot==3)
             {
-                ErrorEPC-=4;
+                g_cp0_regs[CP0_ERROREPC_REG]-=4;
             }
             delay_slot = 0;
             dyna_interp = 0;
@@ -744,17 +649,17 @@ void gen_interupt(void)
             return;
 
         default:
-            DebugMessage(M64MSG_ERROR, "Unknown interrupt queue event type %.8X.", q->type);
+            DebugMessage(M64MSG_ERROR, "Unknown interrupt queue event type %.8X.", q.first->data.type);
             remove_interupt_event();
             break;
     }
 
 #ifdef NEW_DYNAREC
     if (r4300emu == CORE_DYNAREC) {
-        EPC = pcaddr;
+        g_cp0_regs[CP0_EPC_REG] = pcaddr;
         pcaddr = 0x80000180;
-        Status |= 2;
-        Cause &= 0x7FFFFFFF;
+        g_cp0_regs[CP0_STATUS_REG] |= 2;
+        g_cp0_regs[CP0_CAUSE_REG] &= 0x7FFFFFFF;
         pending_exception=1;
     } else {
         exception_general();
