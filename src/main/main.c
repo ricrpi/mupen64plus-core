@@ -662,6 +662,12 @@ static void video_plugin_render_callback(int bScreenRedrawn)
     {
         osd_render();
     }
+
+    // if the input plugin specified a render callback, call it now
+    if(input.renderCallback)
+    {
+        input.renderCallback();
+    }
 }
 
 void new_frame(void)

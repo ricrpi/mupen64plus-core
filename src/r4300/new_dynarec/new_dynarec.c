@@ -1058,8 +1058,8 @@ static void ll_remove_matching_addrs(struct ll_entry **head,int addr,int shift)
 {
   struct ll_entry *next;
   while(*head) {
-    if(((u_int)((*head)->addr)>>shift)==(addr>>shift) || 
-       ((u_int)((*head)->addr-MAX_OUTPUT_BLOCK_SIZE)>>shift)==(addr>>shift))
+    if((((u_int)((*head)->addr)-(u_int)base_addr)>>shift)==((addr-(u_int)base_addr)>>shift) ||
+       (((u_int)((*head)->addr)-(u_int)base_addr-MAX_OUTPUT_BLOCK_SIZE)>>shift)==((addr-(u_int)base_addr)>>shift))
     {
       inv_debug("EXP: Remove pointer to %x (%x)\n",(int)(*head)->addr,(*head)->vaddr);
       remove_hash((*head)->vaddr);
@@ -1093,10 +1093,10 @@ static void ll_clear(struct ll_entry **head)
 static void ll_kill_pointers(struct ll_entry *head,int addr,int shift)
 {
   while(head) {
-    int ptr=get_pointer(head->addr);
+    u_int ptr=get_pointer(head->addr);
     inv_debug("EXP: Lookup pointer to %x at %x (%x)\n",(int)ptr,(int)head->addr,head->vaddr);
-    if(((ptr>>shift)==(addr>>shift)) ||
-       (((ptr-MAX_OUTPUT_BLOCK_SIZE)>>shift)==(addr>>shift)))
+    if((((ptr-(u_int)base_addr)>>shift)==((addr-(u_int)base_addr)>>shift)) ||
+       (((ptr-(u_int)base_addr-MAX_OUTPUT_BLOCK_SIZE)>>shift)==((addr-(u_int)base_addr)>>shift)))
     {
       inv_debug("EXP: Kill pointer at %x (%x)\n",(int)head->addr,head->vaddr);
       u_int host_addr=(int)kill_pointer(head->addr);
@@ -2131,7 +2131,7 @@ static void alu_assemble(int i,struct regstat *i_regs)
             #else
             if(opcode2[i]&2) emit_sbc(s1h,s2h,th);
             #endif
-            else emit_add(s1h,s2h,th);
+            else emit_adc(s1h,s2h,th);
           }
         }
         else if(rs1[i]) {
@@ -5356,10 +5356,12 @@ static void cjump_assemble(int i,struct regstat *i_regs)
         emit_cmpimm(s1l,1);
         if(invert){
           nottaken=(int)out;
-          emit_jge(1);
+          if(only32) emit_jge(1);
+          else emit_jae(1);
         }else{
           add_to_linker((int)out,ba[i],internal);
-          emit_jl(0);
+          if(only32) emit_jl(0);
+          else emit_jb(0); 
         }
       }
       if(opcode[i]==7) // BGTZ
@@ -5367,10 +5369,12 @@ static void cjump_assemble(int i,struct regstat *i_regs)
         emit_cmpimm(s1l,1);
         if(invert){
           nottaken=(int)out;
-          emit_jl(1);
+          if(only32) emit_jl(1);
+          else emit_jb(1);
         }else{
           add_to_linker((int)out,ba[i],internal);
-          emit_jge(0);
+          if(only32) emit_jge(0);
+          else emit_jae(0);
         }
       }
       if(invert) {
@@ -5475,13 +5479,15 @@ static void cjump_assemble(int i,struct regstat *i_regs)
       {
         emit_cmpimm(s1l,1);
         nottaken=(int)out;
-        emit_jge(2);
+        if(only32) emit_jge(2);
+        else emit_jae(2);
       }
       if((opcode[i]&0x2f)==7) // BGTZ
       {
         emit_cmpimm(s1l,1);
         nottaken=(int)out;
-        emit_jl(2);
+        if(only32) emit_jl(2);
+        else emit_jb(2);
       }
     } // if(!unconditional)
     int adj;
@@ -10892,13 +10898,13 @@ int new_recompile_block(int addr)
         // Clear hash table
         for(i=0;i<32;i++) {
           u_int *ht_bin=hash_table[((expirep&2047)<<5)+i];
-          if((ht_bin[3]>>shift)==(base>>shift) ||
-             ((ht_bin[3]-MAX_OUTPUT_BLOCK_SIZE)>>shift)==(base>>shift)) {
+          if(((ht_bin[3]-(u_int)base_addr)>>shift)==((base-(u_int)base_addr)>>shift) ||
+             ((ht_bin[3]-(u_int)base_addr-MAX_OUTPUT_BLOCK_SIZE)>>shift)==((base-(u_int)base_addr)>>shift)) {
             inv_debug("EXP: Remove hash %x -> %x\n",ht_bin[2],ht_bin[3]);
             ht_bin[2]=ht_bin[3]=-1;
           }
-          if((ht_bin[1]>>shift)==(base>>shift) ||
-             ((ht_bin[1]-MAX_OUTPUT_BLOCK_SIZE)>>shift)==(base>>shift)) {
+          if(((ht_bin[1]-(u_int)base_addr)>>shift)==((base-(u_int)base_addr)>>shift) ||
+             ((ht_bin[1]-(u_int)base_addr-MAX_OUTPUT_BLOCK_SIZE)>>shift)==((base-(u_int)base_addr)>>shift)) {
             inv_debug("EXP: Remove hash %x -> %x\n",ht_bin[0],ht_bin[1]);
             ht_bin[0]=ht_bin[2];
             ht_bin[1]=ht_bin[3];

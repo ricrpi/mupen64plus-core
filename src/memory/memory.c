@@ -71,6 +71,8 @@ AI_register ai_register;
 DPC_register dpc_register;
 DPS_register dps_register;
 
+unsigned int CIC_Chip;
+
 ALIGN(16, unsigned int rdram[0x800000/4]);
 
 unsigned char *const rdramb = (unsigned char *)(rdram);
@@ -146,6 +148,7 @@ static int firstFrameBufferSetting;
 int init_memory(int DoByteSwap)
 {
     int i;
+    long long CRC = 0;
 
     if (DoByteSwap != 0)
     {
@@ -942,6 +945,27 @@ int init_memory(int DoByteSwap)
         writememh[0xb000+i] = write_nothingh;
         writememd[0x9000+i] = write_nothingd;
         writememd[0xb000+i] = write_nothingd;
+    }
+
+    // init CIC type
+    for (i = 0x40/4; i < (0x1000/4); i++)
+        CRC += ((uint32_t*)rom)[i];
+
+    switch(CRC)
+    {
+        default:
+            DebugMessage(M64MSG_WARNING, "Unknown CIC type (%08x)! using CIC 6102.", CRC);
+        /* CIC 6102 */
+        case 0x000000D057C85244LL: CIC_Chip = 2; break;
+        /* CIC 6101 */
+        case 0x000000D0027FDF31LL:
+        case 0x000000CFFB631223LL: CIC_Chip = 1; break;
+        /* CIC 6103 */
+        case 0x000000D6497E414BLL: CIC_Chip = 3; break;
+        /* CIC 6105 */
+        case 0x0000011A49F60E96LL: CIC_Chip = 5; break;
+        /* CIC 6106 */
+        case 0x000000D6D5BE5580LL: CIC_Chip = 6; break;
     }
 
     //init PIF_RAM
@@ -3706,17 +3730,18 @@ unsigned int *fast_mem_access(unsigned int address)
 {
     /* This code is performance critical, specially on pure interpreter mode.
      * Removing error checking saves some time, but the emulator may crash. */
-    if (address < 0x80000000 || address >= 0xc0000000)
+
+    if ((address & 0xc0000000) != 0x80000000)
         address = virtual_to_physical_address(address, 2);
 
-    if ((address & 0x1FFFFFFF) >= 0x10000000)
-        return (unsigned int *)rom + ((address & 0x1FFFFFFF) - 0x10000000)/4;
-    else if ((address & 0x1FFFFFFF) < 0x800000)
-        return (unsigned int *)rdram + (address & 0x1FFFFFFF)/4;
-    else if (address >= 0xa4000000 && address <= 0xa4001000)
-        return (unsigned int *)SP_DMEM + (address & 0xFFF)/4;
-    else if ((address >= 0xa4001000 && address <= 0xa4002000))
-        return (unsigned int *)SP_IMEM + (address & 0xFFF)/4;
+    address &= 0x1ffffffc;
+
+    if (address < 0x800000)
+        return (unsigned int*)((unsigned char*)rdram + address);
+    else if (address >= 0x10000000)
+        return (unsigned int*)((unsigned char*)rom + address - 0x10000000);
+    else if ((address & 0xffffe000) == 0x04000000)
+        return (unsigned int*)((unsigned char*)SP_DMEM + (address & 0x1ffc));
     else
         return NULL;
 }

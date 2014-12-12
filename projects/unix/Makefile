@@ -23,9 +23,6 @@
 
 # detect operating system
 UNAME ?= $(shell uname -s)
-MACHINE ?= $(shell uname -m)
-USE_GLES?=1
-
 OS := NONE
 ifeq ("$(UNAME)","Linux")
   OS = LINUX
@@ -98,8 +95,15 @@ ifneq ("$(filter arm%,$(HOST_CPU))","")
     ARCH_DETECTED := 32BITS
     PIC ?= 1
     NEW_DYNAREC := 1
-    CFLAGS += -mfpu=vfp
-    ARM := 1
+    CFLAGS += -marm
+    ifeq ($(NEON), 1)
+        CFLAGS += -mfpu=neon -mfloat-abi=hard -DNEON
+    else if ($(VFP), 1)
+	CFGLAGS += -mfpu=vfp -mfloat-abi=hard
+    else
+        CFLAGS += -mfpu=vfp -mfloat-abi=softfp
+    endif
+
     $(warning Architecture "$(HOST_CPU)" not officially supported.')
   endif
 endif
@@ -114,13 +118,10 @@ RPIFLAGS ?= -fgcse-after-reload -finline-functions -fipa-cp-clone -funswitch-loo
 CFLAGS += $(OPTFLAGS) $(WARNFLAGS) $(RPIFLAGS) -ffast-math -fno-strict-aliasing -fvisibility=hidden -I../../src -DM64P_PARALLEL 
 CXXFLAGS += -fvisibility-inlines-hidden $(RPIFLAGS) 
 
-
-
-ifeq ("$(MACHINE)","armv6l")
-CFLAGS += -DARMv5_ONLY -I/opt/vc/include -I/opt/vc/include/interface/vcos/pthreads -I/opt/vc/include/interface/vmcs_host/linux
+CFLAGS += -DARMv5_ONLY
 CXXFLAGS += -DARMv5_ONLY
-LDLIBS += -lm -L/opt/vc/lib -lGLESv2 -lEGL -lbcm_host 
-endif
+LDLIBS += -lm 
+
 
 # Since we are building a shared library, we must compile with -fPIC on some architectures
 # On 32-bit x86 systems we do not want to use -fPIC because we don't have to and it has a big performance penalty on this arch
@@ -560,7 +561,8 @@ targets:
 	@echo "    LIRC=1        == enable LIRC support"
 	@echo "    NO_ASM=1      == build without assembly (no dynamic recompiler or MMX/SSE code)"
 	@echo "    USE_GLES=1    == build against GLESv2 instead of OpenGL"
-	@echo "    NEON=1        == (ARM only) build for hard floating point environments"
+	@echo "    NEON=1        == (ARM only) build for hard floating point environments with NEON FPU"
+	@echo "    VFP=1         == (ARM only) build for hard floating point environments"
 	@echo "    SHAREDIR=path == extra path to search for shared data files"
 	@echo "    OPTFLAGS=flag == compiler optimization (default: -O3 -flto)"
 	@echo "    WARNFLAGS=flag == compiler warning levels (default: -Wall)"
