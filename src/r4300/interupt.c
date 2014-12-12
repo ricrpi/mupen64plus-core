@@ -28,7 +28,6 @@
 #include "api/callbacks.h"
 #include "api/m64p_vidext.h"
 #include "api/vidext.h"
-#include "api/rpiGLES.h"
 #include "memory/memory.h"
 #include "main/rom.h"
 #include "main/main.h"
@@ -396,31 +395,6 @@ void check_interupt(void)
         }
     }
 }
-void X11_PumpEvents()
-{
-       XEvent  xev;
-
-       while (RPI_NextXEvent(&xev) )
-       {   // check for events from the x-server
-               switch (xev.type)
-               {
-                       case MotionNotify:   // if mouse has moved
-                                       //xev.xmotion.x,xev.xmotion.y
-                               break;
-                       case ButtonPress:
-                               // xev.xbutton.state, xev.xbutton.button << endl;
-                               break;
-                       case KeyPress:
-                               event_sdl_keydown(xev.xkey.keycode, xev.xkey.state);
-                               break;
-                       case KeyRelease:
-                               event_sdl_keyup(xev.xkey.keycode, xev.xkey.state);
-                               break;
-                       default:
-                               break;
-               }
-       }
-}
 
 void gen_interupt(void)
 {
@@ -484,7 +458,6 @@ void gen_interupt(void)
 #ifdef WITH_LIRC
             lircCheckInput();
 #endif
-            X11_PumpEvents();
             SDL_PumpEvents();
 
             timed_sections_refresh();
@@ -497,7 +470,6 @@ void gen_interupt(void)
                 while(rompause)
                 {
                     SDL_Delay(10);
-X11_PumpEvents();
                     SDL_PumpEvents();
 #ifdef WITH_LIRC
                     lircCheckInput();
@@ -544,8 +516,7 @@ X11_PumpEvents();
             lircCheckInput();
 #endif //WITH_LIRC
             SDL_PumpEvents();
-		X11_PumpEvents();
-            PIF_RAMb[0x3F] = 0x0;
+	    PIF_RAMb[0x3F] = 0x0;
             remove_interupt_event();
             MI_register.mi_intr_reg |= 0x02;
             si_register.si_stat |= 0x1000;

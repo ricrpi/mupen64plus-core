@@ -24,6 +24,8 @@
 # detect operating system
 UNAME ?= $(shell uname -s)
 MACHINE ?= $(shell uname -m)
+USE_GLES?=1
+
 OS := NONE
 ifeq ("$(UNAME)","Linux")
   OS = LINUX
@@ -253,6 +255,12 @@ endif
 CFLAGS += $(SDL_CFLAGS)
 LDLIBS += $(SDL_LDLIBS)
 
+ifeq ($(USE_GLES), 1)
+  CFLAGS += -DUSE_GLES
+  # OSD uses non-ES code and breaks attribs of video plugins
+  OSD=0
+endif
+
 OSD ?= 1
 ifeq ($(OSD), 1)
   CFLAGS += -DM64P_OSD
@@ -268,6 +276,9 @@ ifeq ($(OSD), 1)
   LDLIBS += $(FREETYPE2_LDLIBS)
 
   # search for OpenGL libraries
+  ifeq ($(USE_GLES), 1)
+    GL_LDLIBS = -lGLESv2
+  endif
   ifeq ($(OS), OSX)
     GL_LDLIBS = -framework OpenGL
     GLU_LDLIBS = -framework OpenGL
@@ -394,8 +405,6 @@ SOURCE = \
 	$(SRCDIR)/api/debugger.c \
 	$(SRCDIR)/api/frontend.c \
 	$(SRCDIR)/api/vidext.c \
-	$(SRCDIR)/api/esUtil.c \
-	$(SRCDIR)/api/rpiGLES.c \
 	$(SRCDIR)/main/main.c \
 	$(SRCDIR)/main/util.c \
 	$(SRCDIR)/main/cheat.c \
@@ -403,6 +412,7 @@ SOURCE = \
 	$(SRCDIR)/main/md5.c \
 	$(SRCDIR)/main/rom.c \
 	$(SRCDIR)/main/savestates.c \
+	$(SRCDIR)/main/sdl_key_converter.c \
 	$(SRCDIR)/main/workqueue.c \
 	$(SRCDIR)/memory/dma.c \
 	$(SRCDIR)/memory/flashram.c \
@@ -427,6 +437,8 @@ SOURCE = \
 	$(SRCDIR)/r4300/reset.c \
 	$(SRCDIR)/r4300/tlb.c \
 	$(SRCDIR)/osd/screenshot.cpp
+	
+#SOURCE += $(SRCDIR)/api/esUtil.c $(SRCDIR)/api/rpiGLES.c 
 	
 ifeq ("$(OS)","MINGW")
 SOURCE += \
@@ -547,6 +559,8 @@ targets:
 	@echo "    BITS=32       == build 32-bit binaries on 64-bit machine"
 	@echo "    LIRC=1        == enable LIRC support"
 	@echo "    NO_ASM=1      == build without assembly (no dynamic recompiler or MMX/SSE code)"
+	@echo "    USE_GLES=1    == build against GLESv2 instead of OpenGL"
+	@echo "    NEON=1        == (ARM only) build for hard floating point environments"
 	@echo "    SHAREDIR=path == extra path to search for shared data files"
 	@echo "    OPTFLAGS=flag == compiler optimization (default: -O3 -flto)"
 	@echo "    WARNFLAGS=flag == compiler warning levels (default: -Wall)"
@@ -596,7 +610,7 @@ clean:
 	$(RM) -r $(TARGET) $(SONAME) $(OBJDIR)
 
 # build dependency files
-CFLAGS += -MD
+CFLAGS += -MD -MP
 -include $(OBJECTS:.o=.d)
 
 CXXFLAGS += $(CFLAGS)
