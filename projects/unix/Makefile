@@ -98,7 +98,7 @@ ifneq ("$(filter arm%,$(HOST_CPU))","")
     CFLAGS += -marm
     ifeq ($(NEON), 1)
         CFLAGS += -mfpu=neon -mfloat-abi=hard -DNEON
-    else if ($(VFP), 1)
+    elif ($(VFP), 1)
 	CFGLAGS += -mfpu=vfp -mfloat-abi=hard
     else
         CFLAGS += -mfpu=vfp -mfloat-abi=softfp
