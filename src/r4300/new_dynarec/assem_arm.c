@@ -1336,15 +1336,16 @@ static void emit_andimm(int rs,int imm,int rt)
     assem_debug("bic %s,%s,#%d",regname[rt],regname[rs],imm);
     output_w32(0xe3c00000|rd_rn_rm(rt,rs,0)|armval);
   }else if(imm==65535) {
-    #ifdef ARMv5_ONLY
+    // ARMv6 contains uxth
+    /*#ifdef ARMv5_ONLY
     assem_debug("bic %s,%s,#FF000000",regname[rt],regname[rs]);
     output_w32(0xe3c00000|rd_rn_rm(rt,rs,0)|0x4FF);
     assem_debug("bic %s,%s,#00FF0000",regname[rt],regname[rt]);
     output_w32(0xe3c00000|rd_rn_rm(rt,rt,0)|0x8FF);
-    #else
+    #else*/
     assem_debug("uxth %s,%s",regname[rt],regname[rs]);
     output_w32(0xe6ff0070|rd_rn_rm(rt,0,rs));
-    #endif
+    //#endif
   }else{
     assert(imm>0&&imm<65535);
     #ifdef ARMv5_ONLY
