@@ -408,7 +408,7 @@ EXPORT m64p_error CALL VidExt_GL_SetAttribute(m64p_GLattr Attr, int Value)
     if (!SDL_WasInit(SDL_INIT_VIDEO))
         return M64ERR_NOT_INIT;
 	
-	return M64ERR_SUCCESS;
+    //return M64ERR_SUCCESS;
     for (i = 0; i < mapSize; i++)
     {
         if (GLAttrMap[i].m64Attr == Attr)

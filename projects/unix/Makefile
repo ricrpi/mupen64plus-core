@@ -96,14 +96,13 @@ ifneq ("$(filter arm%,$(HOST_CPU))","")
     PIC ?= 1
     NEW_DYNAREC := 1
     CFLAGS += -marm
-    ifeq ($(NEON), 1)
-      CFLAGS += -mfpu=neon -mfloat-abi=hard -DNEON
-    else
-      ifeq ($(VFP), 1)
-        CFLAGS += -mfpu=vfp -mfloat-abi=hard
-      else
-        CFLAGS += -mfpu=vfp -mfloat-abi=softfp
-      endif
+    ifneq ("$(filter armv5%,$(HOST_CPU))","")
+    	CFLAGS += -DARMv5_ONLY
+    	$(warning Using ARMv5_ONLY)
+    endif
+    ifneq ("$(filter armv6%,$(HOST_CPU))","")
+    	CFLAGS += -DARMv5_ONLY
+    	$(warning Using ARMv5_ONLY)
     endif
     $(warning Architecture "$(HOST_CPU)" not officially supported.')
   endif
@@ -119,8 +118,6 @@ RPIFLAGS ?= -fgcse-after-reload -finline-functions -fipa-cp-clone -funswitch-loo
 CFLAGS += $(OPTFLAGS) $(WARNFLAGS) $(RPIFLAGS) -ffast-math -fno-strict-aliasing -fvisibility=hidden -I../../src -DM64P_PARALLEL 
 CXXFLAGS += -fvisibility-inlines-hidden $(RPIFLAGS) 
 
-CFLAGS += -DARMv5_ONLY
-CXXFLAGS += -DARMv5_ONLY
 LDLIBS += -lm 
 
 
@@ -257,8 +254,15 @@ endif
 CFLAGS += $(SDL_CFLAGS)
 LDLIBS += $(SDL_LDLIBS)
 
+ifeq ($(VC), 1)
+  CFLAGS += -I/opt/vc/include -I/opt/vc/include/interface/vcos/pthreads -I/opt/vc/include/vmcs_host/linux
+  LDLIBS += -L/opt/vc/lib -lEGL -lbcm_host -lvcos -lvchiq_arm
+  USE_GLES=1
+endif
+
 ifeq ($(USE_GLES), 1)
   CFLAGS += -DUSE_GLES
+  LDLIBS += -lGLESv2
   # OSD uses non-ES code and breaks attribs of video plugins
   OSD=0
 endif
@@ -278,9 +282,6 @@ ifeq ($(OSD), 1)
   LDLIBS += $(FREETYPE2_LDLIBS)
 
   # search for OpenGL libraries
-  ifeq ($(USE_GLES), 1)
-    GL_LDLIBS = -lGLESv2
-  endif
   ifeq ($(OS), OSX)
     GL_LDLIBS = -framework OpenGL
     GLU_LDLIBS = -framework OpenGL
@@ -562,8 +563,7 @@ targets:
 	@echo "    LIRC=1        == enable LIRC support"
 	@echo "    NO_ASM=1      == build without assembly (no dynamic recompiler or MMX/SSE code)"
 	@echo "    USE_GLES=1    == build against GLESv2 instead of OpenGL"
-	@echo "    NEON=1        == (ARM only) build for hard floating point environments with NEON FPU"
-	@echo "    VFP=1         == (ARM only) build for hard floating point environments"
+	@echo "    VC=1 	 == build against Broadcom Videocore GLESv2"
 	@echo "    SHAREDIR=path == extra path to search for shared data files"
 	@echo "    OPTFLAGS=flag == compiler optimization (default: -O3 -flto)"
 	@echo "    WARNFLAGS=flag == compiler warning levels (default: -Wall)"
