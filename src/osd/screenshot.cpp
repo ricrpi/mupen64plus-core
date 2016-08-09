@@ -19,27 +19,25 @@
  *   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.          *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+#include <SDL.h>
+#include <ctype.h>
+#include <png.h>
+#include <setjmp.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
-#include <ctype.h>
-
-#include <GLES2/gl2.h>
-#include <EGL/egl.h>
-#include <SDL.h>
-#include <png.h>
 
 #include "osd.h"
 
 extern "C" {
 #define M64P_CORE_PROTOTYPES 1
-#include "api/m64p_types.h"
 #include "api/callbacks.h"
-#include "api/m64p_config.h"
 #include "api/config.h"
+#include "api/m64p_config.h"
+#include "api/m64p_types.h"
 #include "main/main.h"
-#include "main/util.h"
 #include "main/rom.h"
+#include "main/util.h"
 #include "osal/files.h"
 #include "osal/preproc.h"
 #include "plugin/plugin.h"
@@ -111,7 +109,7 @@ static int SaveRGBBufferToFile(const char *filename, const unsigned char *buf, i
     // set function pointers in the PNG library, for write callbacks
     png_set_write_fn(png_write, (png_voidp) savefile, user_write_data, user_flush_data);
     // set the info
-    png_set_IHDR(png_write, png_info, width, height, 8, PNG_COLOR_TYPE_RGB_ALPHA,
+    png_set_IHDR(png_write, png_info, width, height, 8, PNG_COLOR_TYPE_RGB,
                  PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
     // allocate row pointers and scale each row to 24-bit color
     png_byte **row_pointers;
@@ -180,6 +178,7 @@ static char *GetNextScreenshotPath(void)
     if (CurrentShotIndex >= 1000)
     {
         DebugMessage(M64MSG_ERROR, "Can't save screenshot; folder already contains 1000 screenshots for this ROM");
+        free(ScreenshotPath);
         return NULL;
     }
     CurrentShotIndex++;
@@ -211,7 +210,7 @@ extern "C" void TakeScreenshot(int iFrameNumber)
     gfx.readScreen(NULL, &width, &height, 0);
 
     // allocate memory for the image
-    unsigned char *pucFrame = (unsigned char *) malloc(width * height * 4);
+    unsigned char *pucFrame = (unsigned char *) malloc(width * height * 3);
     if (pucFrame == NULL)
     {
         free(filename);
@@ -222,7 +221,7 @@ extern "C" void TakeScreenshot(int iFrameNumber)
     gfx.readScreen(pucFrame, &width, &height, 0);
 
     // write the image to a PNG
-    SaveRGBBufferToFile(filename, pucFrame, width, height, width * 4);
+    SaveRGBBufferToFile(filename, pucFrame, width, height, width * 3);
     // free the memory
     free(pucFrame);
     free(filename);
